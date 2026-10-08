@@ -233,3 +233,28 @@ class Case:
         with self.connect() as db:
             db.execute("INSERT INTO messages(task_id,author,body,created) VALUES(?,?,?,?)",(task_id,actor,body,time.time()))
         return {"task_id":task_id,"posted":True}
+
+    def task_list(self):
+        with self.connect() as db:
+            rows=db.execute("SELECT id,title,status,owner,lease_until FROM tasks ORDER BY id").fetchall()
+            return {"tasks":[dict(row) for row in rows]}
+
+    def message_list(self, task_id):
+        with self.connect() as db:
+            rows=db.execute(
+                "SELECT id,task_id,author,body,created FROM messages WHERE task_id=? ORDER BY id",
+                (task_id,)
+            ).fetchall()
+            return {"task_id":task_id,"messages":[dict(row) for row in rows]}
+
+    def status(self):
+        with self.connect() as db:
+            sources=db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+            evidence={row["status"]:row["n"] for row in db.execute(
+                "SELECT status,COUNT(*) AS n FROM evidence GROUP BY status"
+            )}
+            tasks={row["status"]:row["n"] for row in db.execute(
+                "SELECT status,COUNT(*) AS n FROM tasks GROUP BY status"
+            )}
+            return {"sources":sources,"evidence":evidence,"tasks":tasks,
+                    "scope":"Recorded catalog state, not evidence acquisition completeness"}
