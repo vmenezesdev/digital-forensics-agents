@@ -82,6 +82,19 @@ class WorkspaceTests(unittest.TestCase):
             self.case.task_complete(task,"wrong")
         self.assertEqual(self.case.task_complete(task,lease["token"])["status"],"done")
 
+    def test_persistent_board_and_case_status(self):
+        task=self.case.task_add("Review synthetic material")["id"]
+        self.case.message_post(task,"reviewer","Needs source verification")
+        self.assertEqual(self.case.task_list()["tasks"][0]["id"],task)
+        self.assertEqual(self.case.message_list(task)["messages"][0]["author"],"reviewer")
+        self.assertEqual(self.case.status()["tasks"]["available"],1)
+        lease=self.case.task_claim(task,"worker")
+        self.assertEqual(self.case.status()["tasks"]["working"],1)
+        self.case.task_complete(task,lease["token"])
+        self.assertEqual(self.case.status()["tasks"]["done"],1)
+        other=Case(self.case.root)
+        self.assertEqual(other.task_list()["tasks"][0]["status"],"done")
+
     def test_reject_nested_source(self):
         with self.assertRaises(ValueError):
             self.case.source_add("bad",Path(self.tmp.name))
