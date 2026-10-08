@@ -19,19 +19,55 @@ CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,title TEXT,status TEXT D
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,task_id INTEGER,author TEXT,body TEXT,created REAL);
 """
 
-def _inspect_file(path, max_text_bytes=None):
+_SECURE_DIR_FD = (
+    os.open in os.supports_dir_fd
+    and hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+)
+
+
+def _open_confined_file(path, root, flags):
+    """Open beneath a source root without following intermediate symlinks.
+
+    This guards file reads, not the separate directory-name discovery by
+    os.walk. If the platform lacks descriptor-relative no-follow opens,
+    fail closed instead of claiming containment.
+    """
+    if not _SECURE_DIR_FD:
+        raise OSError("Secure descriptor-relative opens unavailable on this platform")
+    try:
+        relative = Path(path).relative_to(root)
+    except ValueError as error:
+        raise OSError("File path is outside the registered source root") from error
+    if not relative.parts or any(part in (".", "..") for part in relative.parts):
+        raise OSError("Invalid evidence-relative path")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(root, directory_flags)
+    try:
+        for component in relative.parts[:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        return os.open(relative.parts[-1], flags, dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _inspect_file(path, max_text_bytes=None, root=None):
     """Read one regular file through one descriptor, without following its final symlink.
 
     Memory is bounded by max_text_bytes when textual bytes are requested.
-    This is not a protection against malicious parent-directory replacement,
-    nor a substitute for controlled forensic acquisition.
+    When root is supplied, every component below root is opened via a
+    no-follow directory descriptor. Source-root ancestors and the separate
+    directory walk remain outside this boundary; not forensic acquisition.
     """
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     elif Path(path).is_symlink():
         raise OSError("Symbolic links are not allowed")
-    fd = os.open(path, flags)
+    fd = (_open_confined_file(path, root, flags) if root is not None
+          else os.open(path, flags))
     try:
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
@@ -57,8 +93,8 @@ def _inspect_file(path, max_text_bytes=None):
         os.close(fd)
 
 
-def sha256_file(path):
-    digest, _, _, changed = _inspect_file(path)
+def sha256_file(path, root=None):
+    digest, _, _, changed = _inspect_file(path, root=root)
     if changed:
         raise OSError("File changed while hashing")
     return digest
@@ -143,7 +179,7 @@ class Case:
                             status, reason = "excluded", "not_regular"
                         else:
                             try:
-                                digest, size, raw, changed = _inspect_file(path, max_text_bytes)
+                                digest, size, raw, changed = _inspect_file(path, max_text_bytes, root=root)
                                 if changed:
                                     status, reason = "error", "changed_during_read"
                                 elif prior and prior["sha256"] and digest != prior["sha256"]:
@@ -293,7 +329,7 @@ class Case:
                     issues.append({"path":r["relpath"],"reason":"missing_or_symlink"})
                 elif r["sha256"]:
                     try:
-                        if sha256_file(p) != r["sha256"]:
+                        if sha256_file(p, root=source_root) != r["sha256"]:
                             issues.append({"path":r["relpath"],"reason":"digest_mismatch"})
                     except OSError:
                         issues.append({"path":r["relpath"],"reason":"unreadable_or_changed"})
