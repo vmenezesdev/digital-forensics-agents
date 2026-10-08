@@ -155,6 +155,57 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn({"path":"long.txt","reason":"unreadable_or_changed"},report["issues"])
 
+    def test_interrupted_walk_rolls_back_and_records_failure(self):
+        old=self.source/"existing.txt"
+        old.write_text("stabletoken")
+        self.case.ingest("sample")
+        old.unlink()
+        fresh=self.source/"uncommitted.txt"
+        fresh.write_text("newtoken")
+        normal_walk=os.walk
+
+        def interrupted_walk(*args, **kwargs):
+            yield from normal_walk(*args, **kwargs)
+            kwargs["onerror"](PermissionError("synthetic unreadable directory"))
+
+        with mock.patch("dfa.store.os.walk", side_effect=interrupted_walk):
+            with self.assertRaisesRegex(ValueError,"rolled back"):
+                self.case.ingest("sample")
+        with sqlite3.connect(self.case.db) as db:
+            rows=db.execute("SELECT relpath,status FROM evidence").fetchall()
+            self.assertEqual(rows,[("existing.txt","indexed")])
+            run=db.execute(
+                "SELECT status,error FROM inventory_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(run,("failed","PermissionError"))
+        receipt=self.case.search("stabletoken")
+        self.assertEqual(receipt["inventory"]["sample"]["status"],"failed")
+        self.assertFalse(receipt["complete"])
+        self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"],"failed")
+
+    def test_file_read_failure_creates_partial_inventory(self):
+        (self.source/"unreadable.txt").write_text("secret")
+        with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic read error")):
+            result=self.case.ingest("sample")
+        self.assertEqual(result["scan_status"],"partial")
+        self.assertEqual(result["errors"],1)
+        self.assertEqual(self.case.search("secret")["results"],[])
+        self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"],"partial")
+
+    def test_replaced_source_root_fails_without_reading_target(self):
+        moved=Path(self.tmp.name)/"moved-source"
+        try:
+            self.source.rename(moved)
+            self.source.symlink_to(moved, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Cannot create symlink for this test")
+        with self.assertRaises(ValueError):
+            self.case.ingest("sample")
+        self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"],"failed")
+        verification=self.case.verify("sample")
+        self.assertFalse(verification["ok"])
+        self.assertEqual(verification["issues"][0]["reason"],"source_root_unavailable_or_symlink")
+
     def test_reject_nested_source(self):
         with self.assertRaises(ValueError):
             self.case.source_add("bad",Path(self.tmp.name))
