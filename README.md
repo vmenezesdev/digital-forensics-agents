@@ -30,6 +30,7 @@ dfa --case /tmp/dfa-demo/workspace verify sample
 dfa --case /tmp/dfa-demo/workspace task-add 'Inspect transcript'
 dfa --case /tmp/dfa-demo/workspace task-list
 dfa --case /tmp/dfa-demo/workspace status
+dfa --case /tmp/dfa-demo/workspace audit-verify
 python -m unittest discover -s tests -v
 ```
 
@@ -42,3 +43,9 @@ The current implementation is a learning prototype: local SQLite is **not** a ha
 The local implementation records the first successfully read SHA-256 baseline for each path, reconciles vanished files during a successful inventory, removes stale FTS results for drifted/excluded items, and reports per-source indexed/excluded/drift/missing coverage. Search receipts include limits and a truncation flag. Task and message listings survive separate agent sessions that access the same local case database.
 
 **Not yet present:** authenticated agents or reviewers, external immutable audit anchors, activity/derivation graph, verified acquisition workflows, scalable OCR/STT/media processing, or multi-host collaboration. FTS text is a sensitive copy; protect the case directory. Source inventories can race with external filesystem modification. Do not use real case data with this prototype.
+
+## Application audit events
+
+The case database stores hash-linked events for source registration, inventory, searches, and task/board operations. `dfa --case CASE_PATH audit-verify` checks event payload digests and ordering. This detects some accidental or unauthorized edits **provided the expected database state is trustworthy**. Because the hashes and events are in the same mutable database, a privileged actor can rewrite both. This is not WORM, an externally anchored log, independent human certification, or chain-of-custody compliance. Existing workspaces may need to run `dfa --case CASE_PATH init` to initialize newly added tables.
+
+The initial reusable skill is [evidence intake](skills/evidence-intake/SKILL.md); further work is tracked in the [roadmap](docs/roadmap.md).
