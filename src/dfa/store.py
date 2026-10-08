@@ -5,6 +5,7 @@ import sqlite3
 import time
 import secrets
 from pathlib import Path
+from . import audit
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, root TEXT NOT NULL);
@@ -40,6 +41,7 @@ class Case:
         self.root.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.db) as db:
             db.executescript(SCHEMA)
+            db.executescript(audit.SCHEMA)
         return {"case": str(self.root)}
 
     def source_add(self, source_id, folder):
@@ -52,6 +54,7 @@ class Case:
             raise ValueError("Case and source must be separate")
         with self.connect() as db:
             db.execute("INSERT INTO sources VALUES (?,?)", (source_id, str(p)))
+            audit.append(db, "operator", "source.add", {"source_id": source_id, "root": str(p)})
         return {"source": source_id}
 
     def ingest(self, source_id, max_text_bytes=1048576):
@@ -154,6 +157,7 @@ class Case:
                 "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
                 (source_id,)
             ).fetchone()[0]
+            audit.append(db, "operator", "source.ingest", {"source_id": source_id, "counts": counts})
             return {"source": source_id, **counts,
                     "limitation": "Inventory of reachable paths only; UTF-8 text indexing, no OCR/STT"}
 
@@ -208,7 +212,9 @@ class Case:
     def task_add(self, title):
         with self.connect() as db:
             db.execute("INSERT INTO tasks(title) VALUES(?)",(title,))
-            return {"id":db.execute("SELECT last_insert_rowid()").fetchone()[0]}
+            task_id=db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            audit.append(db, "operator", "task.add", {"task_id": task_id})
+            return {"id":task_id}
 
     def task_claim(self, task_id, actor, duration=600):
         if not actor or not 1 <= duration <= 86400:
@@ -220,6 +226,7 @@ class Case:
             if not row or not (row["status"]=="available" or row["status"]=="working" and row["lease_until"] is not None and row["lease_until"]<time.time()):
                 raise ValueError("Unavailable task")
             db.execute("UPDATE tasks SET status='working',owner=?,token=?,lease_until=? WHERE id=?",(actor,token,time.time()+duration,task_id))
+            audit.append(db, actor, "task.claim", {"task_id": task_id})
         return {"task_id":task_id,"token":token}
 
     def task_complete(self, task_id, token):
@@ -227,11 +234,13 @@ class Case:
             changed=db.execute("UPDATE tasks SET status='done',token=NULL WHERE id=? AND status='working' AND token=? AND lease_until>?",(task_id,token,time.time())).rowcount
             if not changed:
                 raise ValueError("Invalid or expired lease")
+            audit.append(db, "operator", "task.complete", {"task_id": task_id})
         return {"task_id":task_id,"status":"done","note":"Not a human forensic review"}
 
     def message_post(self, task_id, actor, body):
         with self.connect() as db:
             db.execute("INSERT INTO messages(task_id,author,body,created) VALUES(?,?,?,?)",(task_id,actor,body,time.time()))
+            audit.append(db, actor, "message.post", {"task_id": task_id})
         return {"task_id":task_id,"posted":True}
 
     def task_list(self):
@@ -258,3 +267,7 @@ class Case:
             )}
             return {"sources":sources,"evidence":evidence,"tasks":tasks,
                     "scope":"Recorded catalog state, not evidence acquisition completeness"}
+
+    def audit_verify(self):
+        with self.connect() as db:
+            return audit.verify(db)
