@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, root TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS evidence(id INTEGER PRIMARY KEY,source_id TEXT,relpath TEXT,sha256 TEXT,size INTEGER,status TEXT,reason TEXT,UNIQUE(source_id,relpath));
 CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(evidence_id UNINDEXED,body);
 CREATE TABLE IF NOT EXISTS receipts(id INTEGER PRIMARY KEY,query TEXT,created REAL,report TEXT);
+CREATE TABLE IF NOT EXISTS inventory_runs(id INTEGER PRIMARY KEY,source_id TEXT NOT NULL,started REAL NOT NULL,finished REAL,status TEXT NOT NULL,error TEXT,counts TEXT);
 CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,title TEXT,status TEXT DEFAULT 'available',owner TEXT,token TEXT,lease_until REAL);
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,task_id INTEGER,author TEXT,body TEXT,created REAL);
 """
@@ -97,103 +98,138 @@ class Case:
         return {"source": source_id}
 
     def ingest(self, source_id, max_text_bytes=1048576):
-        """Inventory a source, preserving initial digests and replacing stale index entries.
+        """Inventory reachable paths and record partial/failed attempts separately.
 
-        Not a forensic acquisition. A completed scan is an inventory of reachable
-        paths at that moment; it is not proof of an exhaustive acquisition.
+        This is not forensic acquisition; a successful walk still says nothing
+        about the authenticity or completeness of the acquired evidence.
         """
-        import os
         if not 0 <= max_text_bytes <= 4194304:
             raise ValueError("Invalid limit")
         with self.connect() as db:
             row = db.execute("SELECT root FROM sources WHERE id=?", (source_id,)).fetchone()
             if row is None:
                 raise ValueError("Unknown source")
-            root = Path(row["root"])
-            if root.is_symlink() or not root.is_dir():
-                raise ValueError("Source directory unavailable or replaced by symlink")
-            db.execute("CREATE TEMP TABLE seen_paths(relpath TEXT PRIMARY KEY)")
+            db.execute(
+                "INSERT INTO inventory_runs(source_id,started,status) VALUES(?,?,'running')",
+                (source_id, time.time())
+            )
+            run_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            db.commit()  # Record the attempt even if the inventory rolls back.
             counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0, "missing": 0}
-            def walk_error(error):
-                raise error
-            for folder, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
-                for directory in list(dirs):
-                    if (Path(folder)/directory).is_symlink():
-                        dirs.remove(directory)
-                        files.append(directory)
-                for filename in files:
-                    path = Path(folder)/filename
-                    rel = path.relative_to(root).as_posix()
-                    db.execute("INSERT INTO seen_paths(relpath) VALUES(?)", (rel,))
-                    prior = db.execute(
-                        "SELECT id,sha256 FROM evidence WHERE source_id=? AND relpath=?",
-                        (source_id, rel)
-                    ).fetchone()
-                    digest, size, body, reason = None, None, None, None
-                    if path.is_symlink() or not path.is_file():
-                        status, reason = "excluded", "not_regular"
-                    else:
-                        try:
-                            digest, size, raw, changed = _inspect_file(path, max_text_bytes)
-                            if changed:
-                                status, reason = "error", "changed_during_read"
-                            elif prior and prior["sha256"] and digest != prior["sha256"]:
-                                status, reason = "drift", "baseline_mismatch"
-                            elif size > max_text_bytes:
-                                status, reason = "excluded", "oversized"
-                            elif raw is None:
-                                status, reason = "error", "content_unavailable"
-                            elif bytes([0]) in raw:
-                                status, reason = "excluded", "binary"
-                            else:
-                                try:
-                                    body = raw.decode("utf-8")
-                                    status = "indexed"
-                                except UnicodeDecodeError:
-                                    status, reason = "excluded", "not_utf8"
-                        except OSError:
-                            status, reason = "error", "unreadable"
-                    counts["errors" if status == "error" else status] += 1
-                    if prior:
-                        evidence_id = prior["id"]
-                        db.execute(
-                            "UPDATE evidence SET sha256=COALESCE(sha256,?),"
-                            "size=COALESCE(size,?),status=?,reason=? WHERE id=?",
-                            (digest, size, status, reason, evidence_id)
-                        )
-                    else:
-                        db.execute(
-                            "INSERT INTO evidence(source_id,relpath,sha256,size,status,reason)"
-                            " VALUES(?,?,?,?,?,?)",
-                            (source_id, rel, digest, size, status, reason)
-                        )
-                        evidence_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
-                    # FTS is a disposable projection. Remove stale text for drift,
-                    # errors, reclassified files and repeated inventories.
-                    db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(evidence_id),))
-                    if status == "indexed" and body is not None:
-                        db.execute(
-                            "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
-                            (str(evidence_id), body)
-                        )
-            vanished = db.execute(
-                "SELECT id FROM evidence WHERE source_id=? AND relpath NOT IN "
-                "(SELECT relpath FROM seen_paths) AND status!='missing'",
-                (source_id,)
-            ).fetchall()
-            for record in vanished:
-                db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(record["id"]),))
+            try:
+                root = Path(row["root"])
+                if root.is_symlink() or not root.is_dir():
+                    raise ValueError("Source directory unavailable or replaced by symlink")
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("CREATE TEMP TABLE seen_paths(relpath TEXT PRIMARY KEY)")
+                counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0, "missing": 0}
+                def walk_error(error):
+                    raise error
+                for folder, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+                    for directory in list(dirs):
+                        if (Path(folder)/directory).is_symlink():
+                            dirs.remove(directory)
+                            files.append(directory)
+                    for filename in files:
+                        path = Path(folder)/filename
+                        rel = path.relative_to(root).as_posix()
+                        db.execute("INSERT INTO seen_paths(relpath) VALUES(?)", (rel,))
+                        prior = db.execute(
+                            "SELECT id,sha256 FROM evidence WHERE source_id=? AND relpath=?",
+                            (source_id, rel)
+                        ).fetchone()
+                        digest, size, body, reason = None, None, None, None
+                        if path.is_symlink() or not path.is_file():
+                            status, reason = "excluded", "not_regular"
+                        else:
+                            try:
+                                digest, size, raw, changed = _inspect_file(path, max_text_bytes)
+                                if changed:
+                                    status, reason = "error", "changed_during_read"
+                                elif prior and prior["sha256"] and digest != prior["sha256"]:
+                                    status, reason = "drift", "baseline_mismatch"
+                                elif size > max_text_bytes:
+                                    status, reason = "excluded", "oversized"
+                                elif raw is None:
+                                    status, reason = "error", "content_unavailable"
+                                elif bytes([0]) in raw:
+                                    status, reason = "excluded", "binary"
+                                else:
+                                    try:
+                                        body = raw.decode("utf-8")
+                                        status = "indexed"
+                                    except UnicodeDecodeError:
+                                        status, reason = "excluded", "not_utf8"
+                            except OSError:
+                                status, reason = "error", "unreadable"
+                        counts["errors" if status == "error" else status] += 1
+                        if prior:
+                            evidence_id = prior["id"]
+                            db.execute(
+                                "UPDATE evidence SET sha256=COALESCE(sha256,?),"
+                                "size=COALESCE(size,?),status=?,reason=? WHERE id=?",
+                                (digest, size, status, reason, evidence_id)
+                            )
+                        else:
+                            db.execute(
+                                "INSERT INTO evidence(source_id,relpath,sha256,size,status,reason)"
+                                " VALUES(?,?,?,?,?,?)",
+                                (source_id, rel, digest, size, status, reason)
+                            )
+                            evidence_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                        # FTS is a disposable projection. Remove stale text for drift,
+                        # errors, reclassified files and repeated inventories.
+                        db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(evidence_id),))
+                        if status == "indexed" and body is not None:
+                            db.execute(
+                                "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
+                                (str(evidence_id), body)
+                            )
+                vanished = db.execute(
+                    "SELECT id FROM evidence WHERE source_id=? AND relpath NOT IN "
+                    "(SELECT relpath FROM seen_paths) AND status!='missing'",
+                    (source_id,)
+                ).fetchall()
+                for record in vanished:
+                    db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(record["id"]),))
+                    db.execute(
+                        "UPDATE evidence SET status='missing',reason='not_in_latest_inventory' WHERE id=?",
+                        (record["id"],)
+                    )
+                counts["missing"] = db.execute(
+                    "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
+                    (source_id,)
+                ).fetchone()[0]
+                scan_status = "partial" if counts["errors"] else "complete"
                 db.execute(
-                    "UPDATE evidence SET status='missing',reason='not_in_latest_inventory' WHERE id=?",
-                    (record["id"],)
+                    "UPDATE inventory_runs SET finished=?,status=?,counts=? WHERE id=?",
+                    (time.time(), scan_status, json.dumps(counts, sort_keys=True), run_id)
                 )
-            counts["missing"] = db.execute(
-                "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
-                (source_id,)
-            ).fetchone()[0]
-            audit.append(db, "operator", "source.ingest", {"source_id": source_id, "counts": counts})
-            return {"source": source_id, **counts,
-                    "limitation": "Inventory of reachable paths only; UTF-8 text indexing, no OCR/STT"}
+                audit.append(db, "operator", "source.ingest", {
+                    "source_id": source_id, "run_id": run_id,
+                    "scan_status": scan_status, "counts": counts
+                })
+                return {
+                    "source": source_id, "scan_run_id": run_id,
+                    "scan_status": scan_status, **counts,
+                    "limitation": "Reachable-path inventory only; not forensic acquisition; no OCR/STT"
+                }
+            except (OSError, ValueError) as error:
+                # The partial catalog/index/vanished-file changes must never commit.
+                db.rollback()
+                db.execute(
+                    "UPDATE inventory_runs SET finished=?,status='failed',error=?,counts=? WHERE id=?",
+                    (time.time(), type(error).__name__, json.dumps(counts, sort_keys=True), run_id)
+                )
+                audit.append(db, "operator", "source.ingest_failed", {
+                    "source_id": source_id, "run_id": run_id,
+                    "error_type": type(error).__name__
+                })
+                db.commit()
+                raise ValueError(
+                    f"Inventory run {run_id} failed ({type(error).__name__}); "
+                    "catalog changes rolled back. Coverage may be outdated."
+                ) from error
 
     def search(self, query, limit=20):
         if not query or not query.strip() or not 1 <= limit <= 100:
@@ -215,10 +251,23 @@ class Case:
                 )}
                 for source in db.execute("SELECT id AS source_id FROM sources")
             }
+            inventory = {
+                row["source_id"]: {
+                    "run_id": row["id"], "status": row["status"],
+                    "finished": row["finished"]
+                }
+                for row in db.execute(
+                    "SELECT r.id,r.source_id,r.status,r.finished FROM inventory_runs r "
+                    "WHERE r.id=(SELECT MAX(id) FROM inventory_runs WHERE source_id=r.source_id)"
+                )
+            }
+            for source_id in coverage:
+                inventory.setdefault(source_id, {"run_id": None, "status": "never_scanned"})
             selected = rows[:limit]
             receipt = {
                 "query": query, "results": [dict(r) for r in selected],
                 "coverage": coverage,
+                "inventory": inventory,
                 "result_limit": limit, "truncated": len(rows) > limit,
                 "complete": False,
                 "limitation": "Only indexed UTF-8 text was searched. Inventory may be incomplete; "
@@ -234,6 +283,9 @@ class Case:
             row=db.execute("SELECT root FROM sources WHERE id=?",(source_id,)).fetchone()
             if row is None:
                 raise ValueError("Unknown source")
+            source_root=Path(row["root"])
+            if source_root.is_symlink() or not source_root.is_dir():
+                return {"ok":False,"issues":[{"path":".","reason":"source_root_unavailable_or_symlink"}]}
             issues=[]
             for r in db.execute("SELECT relpath,sha256 FROM evidence WHERE source_id=?",(source_id,)):
                 p=Path(row["root"])/r["relpath"]
@@ -303,7 +355,12 @@ class Case:
             tasks={row["status"]:row["n"] for row in db.execute(
                 "SELECT status,COUNT(*) AS n FROM tasks GROUP BY status"
             )}
-            return {"sources":sources,"evidence":evidence,"tasks":tasks,
+            scans={row["source_id"]: {"run_id":row["id"],"status":row["status"]}
+                   for row in db.execute(
+                       "SELECT id,source_id,status FROM inventory_runs r "
+                       "WHERE id=(SELECT MAX(id) FROM inventory_runs WHERE source_id=r.source_id)"
+                   )}
+            return {"sources":sources,"evidence":evidence,"tasks":tasks,"latest_inventory":scans,
                     "scope":"Recorded catalog state, not evidence acquisition completeness"}
 
     def audit_verify(self):
