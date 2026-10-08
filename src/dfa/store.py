@@ -55,6 +55,11 @@ class Case:
         return {"source": source_id}
 
     def ingest(self, source_id, max_text_bytes=1048576):
+        """Inventory a source, preserving initial digests and replacing stale index entries.
+
+        Not a forensic acquisition. A completed scan is an inventory of reachable
+        paths at that moment; it is not proof of an exhaustive acquisition.
+        """
         import os
         if not 0 <= max_text_bytes <= 4194304:
             raise ValueError("Invalid limit")
@@ -63,68 +68,127 @@ class Case:
             if row is None:
                 raise ValueError("Unknown source")
             root = Path(row["root"])
-            counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0}
-            for folder, dirs, files in os.walk(root, followlinks=False):
-                for d in list(dirs):
-                    if (Path(folder)/d).is_symlink():
-                        dirs.remove(d)
-                        files.append(d)
+            if root.is_symlink() or not root.is_dir():
+                raise ValueError("Source directory unavailable or replaced by symlink")
+            db.execute("CREATE TEMP TABLE seen_paths(relpath TEXT PRIMARY KEY)")
+            counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0, "missing": 0}
+            def walk_error(error):
+                raise error
+            for folder, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+                for directory in list(dirs):
+                    if (Path(folder)/directory).is_symlink():
+                        dirs.remove(directory)
+                        files.append(directory)
                 for filename in files:
                     path = Path(folder)/filename
                     rel = path.relative_to(root).as_posix()
-                    prior = db.execute("SELECT id,sha256,status FROM evidence WHERE source_id=? AND relpath=?", (source_id,rel)).fetchone()
-                    digest, size, body, reason = None,None,None,None
+                    db.execute("INSERT INTO seen_paths(relpath) VALUES(?)", (rel,))
+                    prior = db.execute(
+                        "SELECT id,sha256 FROM evidence WHERE source_id=? AND relpath=?",
+                        (source_id, rel)
+                    ).fetchone()
+                    digest, size, body, reason = None, None, None, None
                     if path.is_symlink() or not path.is_file():
-                        status,reason="excluded","not_regular"
+                        status, reason = "excluded", "not_regular"
                     else:
                         try:
-                            before=path.stat()
-                            digest=sha256_file(path)
-                            after=path.stat()
-                            size=after.st_size
-                            if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):
-                                status,reason="error","changed_during_hash"
-                            elif prior and prior["sha256"] and digest!=prior["sha256"]:
-                                status,reason="drift","baseline_mismatch"
-                            elif size>max_text_bytes:
-                                status,reason="excluded","oversized"
+                            before = path.stat()
+                            digest = sha256_file(path)
+                            after = path.stat()
+                            size = after.st_size
+                            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                                status, reason = "error", "changed_during_hash"
+                            elif prior and prior["sha256"] and digest != prior["sha256"]:
+                                status, reason = "drift", "baseline_mismatch"
+                            elif size > max_text_bytes:
+                                status, reason = "excluded", "oversized"
                             else:
-                                raw=path.read_bytes()
-                                if hashlib.sha256(raw).hexdigest()!=digest:
-                                    status,reason="error","changed_during_read"
+                                raw = path.read_bytes()
+                                if hashlib.sha256(raw).hexdigest() != digest:
+                                    status, reason = "error", "changed_during_read"
                                 elif bytes([0]) in raw:
-                                    status,reason="excluded","binary"
+                                    status, reason = "excluded", "binary"
                                 else:
                                     try:
-                                        body=raw.decode("utf-8")
-                                        status="indexed"
+                                        body = raw.decode("utf-8")
+                                        status = "indexed"
                                     except UnicodeDecodeError:
-                                        status,reason="excluded","not_utf8"
+                                        status, reason = "excluded", "not_utf8"
                         except OSError:
-                            status,reason="error","unreadable"
-                    counts[status if status in counts else "excluded"]+=1
+                            status, reason = "error", "unreadable"
+                    counts["errors" if status == "error" else status] += 1
                     if prior:
-                        db.execute("UPDATE evidence SET status=?,reason=? WHERE id=?", (status,reason,prior["id"]))
-                        evidence_id=prior["id"]
+                        evidence_id = prior["id"]
+                        db.execute(
+                            "UPDATE evidence SET sha256=COALESCE(sha256,?),"
+                            "size=COALESCE(size,?),status=?,reason=? WHERE id=?",
+                            (digest, size, status, reason, evidence_id)
+                        )
                     else:
-                        db.execute("INSERT INTO evidence(source_id,relpath,sha256,size,status,reason) VALUES (?,?,?,?,?,?)", (source_id,rel,digest,size,status,reason))
-                        evidence_id=db.execute("SELECT last_insert_rowid()").fetchone()[0]
-                    if body is not None and not prior:
-                        db.execute("INSERT INTO search_index(evidence_id,body) VALUES(?,?)", (str(evidence_id),body))
-        return {"source": source_id, **counts, "limitation": "UTF-8 text only; coverage of binary and unsupported material is incomplete"}
+                        db.execute(
+                            "INSERT INTO evidence(source_id,relpath,sha256,size,status,reason)"
+                            " VALUES(?,?,?,?,?,?)",
+                            (source_id, rel, digest, size, status, reason)
+                        )
+                        evidence_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    # FTS is a disposable projection. Remove stale text for drift,
+                    # errors, reclassified files and repeated inventories.
+                    db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(evidence_id),))
+                    if status == "indexed" and body is not None:
+                        db.execute(
+                            "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
+                            (str(evidence_id), body)
+                        )
+            vanished = db.execute(
+                "SELECT id FROM evidence WHERE source_id=? AND relpath NOT IN "
+                "(SELECT relpath FROM seen_paths) AND status!='missing'",
+                (source_id,)
+            ).fetchall()
+            for record in vanished:
+                db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(record["id"]),))
+                db.execute(
+                    "UPDATE evidence SET status='missing',reason='not_in_latest_inventory' WHERE id=?",
+                    (record["id"],)
+                )
+            counts["missing"] = db.execute(
+                "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
+                (source_id,)
+            ).fetchone()[0]
+            return {"source": source_id, **counts,
+                    "limitation": "Inventory of reachable paths only; UTF-8 text indexing, no OCR/STT"}
 
     def search(self, query, limit=20):
-        if not 1 <= limit <= 100:
-            raise ValueError("Invalid limit")
+        if not query or not query.strip() or not 1 <= limit <= 100:
+            raise ValueError("Invalid query or result limit")
         with self.connect() as db:
             try:
-                rows=db.execute("SELECT e.id,e.source_id,e.relpath FROM search_index i JOIN evidence e ON e.id=CAST(i.evidence_id AS INTEGER) WHERE search_index MATCH ? AND e.status='indexed' LIMIT ?",(query,limit)).fetchall()
-            except sqlite3.OperationalError as e:
-                raise ValueError("Invalid FTS query") from e
-            coverage={r["status"]:r["n"] for r in db.execute("SELECT status,COUNT(*) n FROM evidence GROUP BY status")}
-            receipt={"query":query,"results":[dict(r) for r in rows],"coverage":coverage,"complete":False,"limitation":"No match does not prove absence from unindexed or unprocessed source data"}
-            db.execute("INSERT INTO receipts(query,created,report) VALUES(?,?,?)",(query,time.time(),json.dumps(receipt)))
-            receipt["receipt_id"]=db.execute("SELECT last_insert_rowid()").fetchone()[0]
+                rows = db.execute(
+                    "SELECT e.id,e.source_id,e.relpath FROM search_index i "
+                    "JOIN evidence e ON e.id=CAST(i.evidence_id AS INTEGER) "
+                    "WHERE search_index MATCH ? AND e.status='indexed' "
+                    "ORDER BY e.id LIMIT ?", (query, limit + 1)
+                ).fetchall()
+            except sqlite3.OperationalError as error:
+                raise ValueError("Invalid FTS query") from error
+            coverage = {
+                source["source_id"]: {r["status"]: r["n"] for r in db.execute(
+                    "SELECT status,COUNT(*) AS n FROM evidence "
+                    "WHERE source_id=? GROUP BY status", (source["source_id"],)
+                )}
+                for source in db.execute("SELECT id AS source_id FROM sources")
+            }
+            selected = rows[:limit]
+            receipt = {
+                "query": query, "results": [dict(r) for r in selected],
+                "coverage": coverage,
+                "result_limit": limit, "truncated": len(rows) > limit,
+                "complete": False,
+                "limitation": "Only indexed UTF-8 text was searched. Inventory may be incomplete; "
+                              "no-match does not prove absence."
+            }
+            db.execute("INSERT INTO receipts(query,created,report) VALUES(?,?,?)",
+                       (query, time.time(), json.dumps(receipt, sort_keys=True)))
+            receipt["receipt_id"] = db.execute("SELECT last_insert_rowid()").fetchone()[0]
             return receipt
 
     def verify(self, source_id):
