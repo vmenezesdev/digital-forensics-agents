@@ -4,6 +4,8 @@ import json
 import sqlite3
 import time
 import secrets
+import os
+import stat
 from pathlib import Path
 from . import audit
 
@@ -16,12 +18,49 @@ CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,title TEXT,status TEXT D
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,task_id INTEGER,author TEXT,body TEXT,created REAL);
 """
 
+def _inspect_file(path, max_text_bytes=None):
+    """Read one regular file through one descriptor, without following its final symlink.
+
+    Memory is bounded by max_text_bytes when textual bytes are requested.
+    This is not a protection against malicious parent-directory replacement,
+    nor a substitute for controlled forensic acquisition.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    elif Path(path).is_symlink():
+        raise OSError("Symbolic links are not allowed")
+    fd = os.open(path, flags)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError("Not a regular file")
+        hasher = hashlib.sha256()
+        collect = max_text_bytes is not None and before.st_size <= max_text_bytes
+        captured = bytearray() if collect else None
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            if captured is not None:
+                if len(captured) + len(chunk) > max_text_bytes:
+                    captured = None
+                else:
+                    captured.extend(chunk)
+        after = os.fstat(fd)
+        attributes = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+        changed = attributes(before) != attributes(after)
+        return hasher.hexdigest(), after.st_size, bytes(captured) if captured is not None else None, changed
+    finally:
+        os.close(fd)
+
+
 def sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    digest, _, _, changed = _inspect_file(path)
+    if changed:
+        raise OSError("File changed while hashing")
+    return digest
 
 class Case:
     def __init__(self, root):
@@ -95,28 +134,23 @@ class Case:
                         status, reason = "excluded", "not_regular"
                     else:
                         try:
-                            before = path.stat()
-                            digest = sha256_file(path)
-                            after = path.stat()
-                            size = after.st_size
-                            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-                                status, reason = "error", "changed_during_hash"
+                            digest, size, raw, changed = _inspect_file(path, max_text_bytes)
+                            if changed:
+                                status, reason = "error", "changed_during_read"
                             elif prior and prior["sha256"] and digest != prior["sha256"]:
                                 status, reason = "drift", "baseline_mismatch"
                             elif size > max_text_bytes:
                                 status, reason = "excluded", "oversized"
+                            elif raw is None:
+                                status, reason = "error", "content_unavailable"
+                            elif bytes([0]) in raw:
+                                status, reason = "excluded", "binary"
                             else:
-                                raw = path.read_bytes()
-                                if hashlib.sha256(raw).hexdigest() != digest:
-                                    status, reason = "error", "changed_during_read"
-                                elif bytes([0]) in raw:
-                                    status, reason = "excluded", "binary"
-                                else:
-                                    try:
-                                        body = raw.decode("utf-8")
-                                        status = "indexed"
-                                    except UnicodeDecodeError:
-                                        status, reason = "excluded", "not_utf8"
+                                try:
+                                    body = raw.decode("utf-8")
+                                    status = "indexed"
+                                except UnicodeDecodeError:
+                                    status, reason = "excluded", "not_utf8"
                         except OSError:
                             status, reason = "error", "unreadable"
                     counts["errors" if status == "error" else status] += 1
@@ -205,8 +239,12 @@ class Case:
                 p=Path(row["root"])/r["relpath"]
                 if p.is_symlink() or not p.is_file():
                     issues.append({"path":r["relpath"],"reason":"missing_or_symlink"})
-                elif r["sha256"] and sha256_file(p)!=r["sha256"]:
-                    issues.append({"path":r["relpath"],"reason":"digest_mismatch"})
+                elif r["sha256"]:
+                    try:
+                        if sha256_file(p) != r["sha256"]:
+                            issues.append({"path":r["relpath"],"reason":"digest_mismatch"})
+                    except OSError:
+                        issues.append({"path":r["relpath"],"reason":"unreadable_or_changed"})
         return {"ok":not issues,"issues":issues}
 
     def task_add(self, title):
