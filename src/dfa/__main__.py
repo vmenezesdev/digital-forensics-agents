@@ -8,6 +8,9 @@ def main(argv=None):
     p.add_argument("--case",required=True)
     subs=p.add_subparsers(dest="action",required=True)
     subs.add_parser("init")
+    subs.add_parser("status")
+    subs.add_parser("task-list")
+    a=subs.add_parser("message-list");a.add_argument("id",type=int)
     a=subs.add_parser("source-add");a.add_argument("source_id");a.add_argument("path")
     a=subs.add_parser("ingest");a.add_argument("source_id")
     a=subs.add_parser("verify");a.add_argument("source_id")
@@ -19,7 +22,8 @@ def main(argv=None):
     x=p.parse_args(argv)
     case=Case(x.case)
     try:
-        commands={"init":lambda:case.init(),"source-add":lambda:case.source_add(x.source_id,x.path),
+        commands={"init":lambda:case.init(),"status":lambda:case.status(),
+                  "task-list":lambda:case.task_list(),"message-list":lambda:case.message_list(x.id),"source-add":lambda:case.source_add(x.source_id,x.path),
                   "ingest":lambda:case.ingest(x.source_id),"verify":lambda:case.verify(x.source_id),
                   "search":lambda:case.search(x.query),"task-add":lambda:case.task_add(x.title),
                   "task-claim":lambda:case.task_claim(x.id,x.actor),"task-complete":lambda:case.task_complete(x.id,x.token),
