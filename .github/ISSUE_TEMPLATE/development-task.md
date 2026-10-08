@@ -29,7 +29,7 @@ Describe the smallest reversible slice. Identify public specification changes, i
 
 ## Dependencies
 
-Link blocking issues and the milestone from [the roadmap](../../docs/roadmap.md). Prefer explicit `Blocked by #N` over implied sequencing.
+Link blocking issues and the milestone from [the roadmap](https://github.com/vmenezesdev/digital-forensics-agents/blob/trunk/docs/roadmap.md). Prefer explicit `Blocked by #N` over implied sequencing.
 
 ## Definition of done
 
