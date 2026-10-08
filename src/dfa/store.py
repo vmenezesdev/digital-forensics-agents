@@ -92,7 +92,7 @@ class Case:
                                 raw=path.read_bytes()
                                 if hashlib.sha256(raw).hexdigest()!=digest:
                                     status,reason="error","changed_during_read"
-                                elif b"\\x00" in raw:
+                                elif bytes([0]) in raw:
                                     status,reason="excluded","binary"
                                 else:
                                     try:
