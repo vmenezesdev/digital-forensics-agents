@@ -28,9 +28,17 @@ dfa --case /tmp/dfa-demo/workspace ingest sample
 dfa --case /tmp/dfa-demo/workspace search alpha
 dfa --case /tmp/dfa-demo/workspace verify sample
 dfa --case /tmp/dfa-demo/workspace task-add 'Inspect transcript'
+dfa --case /tmp/dfa-demo/workspace task-list
+dfa --case /tmp/dfa-demo/workspace status
 python -m unittest discover -s tests -v
 ```
 
 The current implementation is a learning prototype: local SQLite is **not** a hardened evidence store, no agent identity is authenticated, no independent custody log is produced, and the search index is limited to small UTF-8 files. Query receipts describe the indexed universe; they cannot prove exhaustive absence. No external services are invoked.
 
 **Development policy:** accelerated trunk-based development. Commit tested, reversible increments directly to `trunk`. Delay long-lived branches and release processes until stabilization.
+
+## Development snapshot
+
+The local implementation records the first successfully read SHA-256 baseline for each path, reconciles vanished files during a successful inventory, removes stale FTS results for drifted/excluded items, and reports per-source indexed/excluded/drift/missing coverage. Search receipts include limits and a truncation flag. Task and message listings survive separate agent sessions that access the same local case database.
+
+**Not yet present:** authenticated agents or reviewers, external immutable audit anchors, activity/derivation graph, verified acquisition workflows, scalable OCR/STT/media processing, or multi-host collaboration. FTS text is a sensitive copy; protect the case directory. Source inventories can race with external filesystem modification. Do not use real case data with this prototype.
