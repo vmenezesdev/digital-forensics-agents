@@ -95,6 +95,16 @@ class WorkspaceTests(unittest.TestCase):
         other=Case(self.case.root)
         self.assertEqual(other.task_list()["tasks"][0]["status"],"done")
 
+    def test_audit_checksums_detect_row_modification(self):
+        task=self.case.task_add("audit work")["id"]
+        self.case.message_post(task,"worker","note")
+        self.assertTrue(self.case.audit_verify()["ok"])
+        with sqlite3.connect(self.case.db) as db:
+            db.execute("UPDATE audit_events SET action='tampered' WHERE id=1")
+        report=self.case.audit_verify()
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["reason"],"digest_mismatch")
+
     def test_reject_nested_source(self):
         with self.assertRaises(ValueError):
             self.case.source_add("bad",Path(self.tmp.name))
