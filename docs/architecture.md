@@ -12,6 +12,13 @@ The local ingest path now opens each regular file once through a single descript
 
 **Residual limitations:** replacing parent directories during traversal, filesystem changes outside the file's metadata checks, scanning an uncontrolled mount, partial filesystem walks, and permission/authorization issues are not yet resolved. This mitigates a specific file-open race but **does not authenticate acquisition, guarantee an exhaustive inventory, or replace documented chain of custody**. Work on these cases remains open in [issue #2](https://github.com/vmenezesdev/digital-forensics-agents/issues/2). Only synthetic fixtures are supported.
 
+
+## Descriptor-anchored file reads (refs #2)
+
+For source inventory and verification, the reference now opens each path component **below the registered source root** using descriptor-relative `os.open(..., dir_fd=...)` and `O_NOFOLLOW`/`O_DIRECTORY`. The final file is also opened with `O_NOFOLLOW`; hashing and bounded text capture use the same descriptor. On platforms without these secure operations, the inventory must report read failures rather than silently falling back to unsafe path-following.
+
+**What this does not cover:** `os.walk` still discovers names through normal paths and may encounter changes during traversal, so name discovery and completeness are not race-free. Directory components **above** the registered root can be replaced; the root mount and filesystem are not attested, and an attacker who can rewrite source bytes in place may still race reads. No chain-of-custody or exhaustive acquisition claim is justified. Further race-safe traversal and scan conformance tests are tracked in [#2](https://github.com/vmenezesdev/digital-forensics-agents/issues/2).
+
 ## Inventory run status (refs #2)
 
 Every ingest attempt records a row in `inventory_runs` with its source identifier, start/end timestamps, final state and attempt counts. A successful directory traversal with unreadable files is **partial**, not complete. An unsuccessful traversal is **failed**: catalog/index edits from that attempt roll back, and the failed attempt itself remains recorded. Vanished files are reconciled only after the walker reaches the end without a traversal error. Search receipts and case status expose the most recent scan state, so cached search results after a failed rescan are visibly **potentially stale**.
