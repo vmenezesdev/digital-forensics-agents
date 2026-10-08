@@ -206,6 +206,63 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(verification["ok"])
         self.assertEqual(verification["issues"][0]["reason"],"source_root_unavailable_or_symlink")
 
+    @unittest.skipUnless(
+        hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd,
+        "Requires secure POSIX directory-relative opens"
+    )
+    def test_intermediate_directory_swap_cannot_escape_source_root(self):
+        inside = self.source/"nested"
+        inside.mkdir()
+        (inside/"artifact.txt").write_text("internal_marker")
+        outside = Path(self.tmp.name)/"outside-directory"
+        outside.mkdir()
+        (outside/"artifact.txt").write_text("external_marker")
+        moved = self.source/"moved-original"
+        real_open = os.open
+        swapped = False
+
+        def swap_parent_during_open(path, flags, *args, **kwargs):
+            nonlocal swapped
+            if path == "nested" and kwargs.get("dir_fd") is not None and not swapped:
+                swapped = True
+                inside.rename(moved)
+                inside.symlink_to(outside, target_is_directory=True)
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch("dfa.store.os.open", side_effect=swap_parent_during_open):
+            result = self.case.ingest("sample")
+        self.assertTrue(swapped)
+        self.assertEqual(result["scan_status"], "partial")
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(self.case.search("external_marker")["results"], [])
+        with sqlite3.connect(self.case.db) as db:
+            status, reason = db.execute(
+                "SELECT status,reason FROM evidence WHERE relpath='nested/artifact.txt'"
+            ).fetchone()
+            self.assertEqual((status, reason), ("error", "unreadable"))
+
+    @unittest.skipUnless(
+        hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd,
+        "Requires secure POSIX directory-relative opens"
+    )
+    def test_verify_detects_intermediate_directory_symlink(self):
+        nested = self.source/"nested"
+        nested.mkdir()
+        (nested/"artifact.txt").write_text("baseline")
+        self.case.ingest("sample")
+        moved = self.source/"moved"
+        nested.rename(moved)
+        outside = Path(self.tmp.name)/"outside"
+        outside.mkdir()
+        (outside/"artifact.txt").write_text("different")
+        nested.symlink_to(outside, target_is_directory=True)
+        verification = self.case.verify("sample")
+        self.assertFalse(verification["ok"])
+        self.assertIn(
+            {"path":"nested/artifact.txt","reason":"unreadable_or_changed"},
+            verification["issues"]
+        )
+
     def test_reject_nested_source(self):
         with self.assertRaises(ValueError):
             self.case.source_add("bad",Path(self.tmp.name))
