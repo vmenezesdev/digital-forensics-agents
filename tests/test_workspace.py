@@ -1,4 +1,6 @@
+import os
 import sqlite3
+from unittest import mock
 import tempfile
 import unittest
 from pathlib import Path
@@ -104,6 +106,54 @@ class WorkspaceTests(unittest.TestCase):
         report=self.case.audit_verify()
         self.assertFalse(report["ok"])
         self.assertEqual(report["reason"],"digest_mismatch")
+
+    def test_file_symlink_not_followed_during_ingest(self):
+        outside=Path(self.tmp.name)/"outside.txt"
+        outside.write_text("outside_secret")
+        link=self.source/"linked.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symbolic links not available")
+        result=self.case.ingest("sample")
+        self.assertEqual(result["excluded"],1)
+        self.assertEqual(self.case.search("outside_secret")["results"],[])
+        with sqlite3.connect(self.case.db) as db:
+            record=db.execute(
+                "SELECT status,reason FROM evidence WHERE relpath='linked.txt'"
+            ).fetchone()
+            self.assertEqual(record,("excluded","not_regular"))
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "Requires O_NOFOLLOW")
+    def test_swapped_final_symlink_at_open_is_not_read(self):
+        from dfa.store import _inspect_file
+        target=self.source/"candidate.txt"
+        target.write_text("original")
+        outside=Path(self.tmp.name)/"outside.txt"
+        outside.write_text("secret")
+        real_open=os.open
+        def swap_before_open(path, flags, *args, **kwargs):
+            if str(path)==str(target):
+                target.unlink()
+                target.symlink_to(outside)
+            return real_open(path, flags, *args, **kwargs)
+        with mock.patch("dfa.store.os.open",side_effect=swap_before_open):
+            with self.assertRaises(OSError):
+                _inspect_file(target,1024)
+
+    def test_read_is_bounded_and_verification_errors_are_reported(self):
+        from dfa.store import _inspect_file
+        target=self.source/"long.txt"
+        target.write_text("abcdefghij")
+        digest,size,content,changed=_inspect_file(target,3)
+        self.assertEqual(size,10)
+        self.assertIsNone(content)
+        self.assertFalse(changed)
+        self.case.ingest("sample")
+        with mock.patch("dfa.store.sha256_file",side_effect=OSError("unreadable")):
+            report=self.case.verify("sample")
+        self.assertFalse(report["ok"])
+        self.assertIn({"path":"long.txt","reason":"unreadable_or_changed"},report["issues"])
 
     def test_reject_nested_source(self):
         with self.assertRaises(ValueError):
