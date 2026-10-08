@@ -9,6 +9,7 @@ def main(argv=None):
     subs=p.add_subparsers(dest="action",required=True)
     subs.add_parser("init")
     subs.add_parser("status")
+    subs.add_parser("audit-verify")
     subs.add_parser("task-list")
     a=subs.add_parser("message-list");a.add_argument("id",type=int)
     a=subs.add_parser("source-add");a.add_argument("source_id");a.add_argument("path")
@@ -23,6 +24,7 @@ def main(argv=None):
     case=Case(x.case)
     try:
         commands={"init":lambda:case.init(),"status":lambda:case.status(),
+                  "audit-verify":lambda:case.audit_verify(),
                   "task-list":lambda:case.task_list(),"message-list":lambda:case.message_list(x.id),"source-add":lambda:case.source_add(x.source_id,x.path),
                   "ingest":lambda:case.ingest(x.source_id),"verify":lambda:case.verify(x.source_id),
                   "search":lambda:case.search(x.query),"task-add":lambda:case.task_add(x.title),
