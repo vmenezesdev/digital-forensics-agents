@@ -24,9 +24,46 @@ class WorkspaceTests(unittest.TestCase):
         result=self.case.search("alpha")
         self.assertEqual(len(result["results"]),1)
         self.assertFalse(result["complete"])
-        self.assertEqual(result["coverage"]["excluded"],1)
+        self.assertEqual(result["coverage"]["sample"]["excluded"],1)
         with sqlite3.connect(self.case.db) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],1)
+
+    def test_missing_file_is_not_searchable(self):
+        p=self.source/"gone.txt"
+        p.write_text("disappearingword")
+        self.case.ingest("sample")
+        self.assertEqual(len(self.case.search("disappearingword")["results"]),1)
+        p.unlink()
+        self.case.ingest("sample")
+        self.assertEqual(self.case.search("disappearingword")["results"],[])
+        with sqlite3.connect(self.case.db) as db:
+            self.assertEqual(db.execute("SELECT status FROM evidence WHERE relpath='gone.txt'").fetchone()[0],"missing")
+
+    def test_reindex_is_idempotent(self):
+        p=self.source/"memo.txt"
+        p.write_text("findable")
+        self.case.ingest("sample")
+        self.case.ingest("sample")
+        self.assertEqual(len(self.case.search("findable")["results"]),1)
+        with sqlite3.connect(self.case.db) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM search_index").fetchone()[0],1)
+
+    def test_drift_removes_outdated_index(self):
+        p=self.source/"old.txt"
+        p.write_text("olderterm")
+        self.case.ingest("sample")
+        p.write_text("newerterm")
+        self.assertEqual(self.case.ingest("sample")["drift"],1)
+        self.assertEqual(self.case.search("olderterm")["results"],[])
+        self.assertEqual(self.case.search("newerterm")["results"],[])
+
+    def test_search_limit_exposes_truncation(self):
+        for n in range(3):
+            (self.source/f"{n}.txt").write_text("sharedtoken")
+        self.case.ingest("sample")
+        receipt=self.case.search("sharedtoken",limit=1)
+        self.assertTrue(receipt["truncated"])
+        self.assertEqual(len(receipt["results"]),1)
 
     def test_drift_does_not_overwrite_baseline(self):
         p=self.source/"sample.txt"
