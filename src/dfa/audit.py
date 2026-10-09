@@ -55,3 +55,46 @@ def verify(db):
         count += 1
     return {"ok": True, "checked": count, "head": expected,
             "limitation": "Database administrators can rewrite both events and hashes"}
+
+# A manifest is only useful when copied outside this mutable case database.
+CHECKPOINT_FORMAT = "dfa-audit-checkpoint-v1"
+TRUST_BOUNDARY = (
+    "Local mutable application log; independent retention and authentication "
+    "of the exported checkpoint are the operator's responsibility. "
+    "This is not chain-of-custody certification."
+)
+
+def checkpoint(db):
+    """Export an independently storable reference to the verified local log head."""
+    report = verify(db)
+    if not report["ok"]:
+        raise ValueError("Audit log is inconsistent; cannot issue checkpoint")
+    return {
+        "format": CHECKPOINT_FORMAT,
+        "event_count": report["checked"],
+        "head": report["head"],
+        "trust_boundary": TRUST_BOUNDARY,
+    }
+
+def verify_checkpoint(db, manifest):
+    """Check the local chain and compare it with an externally retained manifest."""
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("format") != CHECKPOINT_FORMAT
+        or type(manifest.get("event_count")) is not int
+        or manifest["event_count"] < 0
+        or not isinstance(manifest.get("head"), str)
+        or len(manifest["head"]) != 64
+        or any(char not in "0123456789abcdef" for char in manifest["head"])
+    ):
+        raise ValueError("Invalid audit checkpoint manifest (expected dfa-audit-checkpoint-v1)")
+    report = verify(db)
+    report["trust_boundary"] = TRUST_BOUNDARY
+    report["checkpoint_checked"] = True
+    if not report["ok"]:
+        return report
+    if report["checked"] != manifest["event_count"]:
+        return {**report, "ok": False, "reason": "checkpoint_count_mismatch"}
+    if report["head"] != manifest["head"]:
+        return {**report, "ok": False, "reason": "checkpoint_head_mismatch"}
+    return report
