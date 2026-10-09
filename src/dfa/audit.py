@@ -96,8 +96,18 @@ def verify_checkpoint(db, manifest):
     report["checkpoint_checked"] = True
     if not report["ok"]:
         return report
-    if report["checked"] != manifest["event_count"]:
+    anchored_count = manifest["event_count"]
+    if report["checked"] < anchored_count:
         return {**report, "ok": False, "reason": "checkpoint_count_mismatch"}
-    if report["head"] != manifest["head"]:
+    if anchored_count == 0:
+        anchored_head = ZERO
+    else:
+        anchored_head = db.execute(
+            "SELECT event_hash FROM audit_events ORDER BY id "
+            "LIMIT 1 OFFSET ?", (anchored_count - 1,)
+        ).fetchone()[0]
+    if anchored_head != manifest["head"]:
         return {**report, "ok": False, "reason": "checkpoint_head_mismatch"}
+    report["checkpoint_anchored_events"] = anchored_count
+    report["events_after_checkpoint"] = report["checked"] - anchored_count
     return report
