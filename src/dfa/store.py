@@ -278,6 +278,12 @@ class Case:
                     "SELECT e.id,e.source_id,e.relpath FROM search_index i "
                     "JOIN evidence e ON e.id=CAST(i.evidence_id AS INTEGER) "
                     "WHERE search_index MATCH ? AND e.status='indexed' "
+                    "AND EXISTS ("
+                    "SELECT 1 FROM inventory_runs r "
+                    "WHERE r.source_id=e.source_id AND r.status='complete' "
+                    "AND r.id=(SELECT MAX(latest.id) FROM inventory_runs latest "
+                    "WHERE latest.source_id=e.source_id)"
+                    ") "
                     "ORDER BY e.id LIMIT ?", (query, limit + 1)
                 ).fetchall()
             except sqlite3.OperationalError as error:
@@ -308,7 +314,7 @@ class Case:
                 "inventory": inventory,
                 "result_limit": limit, "truncated": len(rows) > limit,
                 "complete": False,
-                "limitation": "Only indexed UTF-8 text was searched. Inventory may be incomplete; "
+                "limitation": "Only indexed UTF-8 text from sources with a complete latest scan was searched. "
                               "no-match does not prove absence."
             }
             db.execute("INSERT INTO receipts(query,created,report) VALUES(?,?,?)",
