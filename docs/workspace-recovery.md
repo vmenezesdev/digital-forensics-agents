@@ -55,6 +55,6 @@ dfa --case /private/synthetic-case audit-checkpoint > /private/checkpoint-v1.jso
 dfa --case /private/synthetic-case audit-verify --checkpoint /private/checkpoint-v1.json
 ```
 
-An exported manifest contains the event count and head digest of a locally verified audit chain. If stored independently and authenticated by the operator, later verification can detect deletion of the tail or rewriting all local hashes to a different chain head. A local verifier without an external checkpoint **cannot** detect all such attacks. Neither the manifest nor the local hash chain provides WORM retention, verified identity, independently trusted time or chain-of-custody compliance.
+An exported manifest contains the event count and head digest of a locally verified audit-chain **prefix**. Verification of that prefix remains valid even after new legitimate events are appended; the result reports the number of events added since the checkpoint. If stored independently and authenticated by the operator, it can detect deletion of the anchored tail or rewriting earlier hashes to a different chain head. A local verifier without an external checkpoint **cannot** detect all such attacks. Neither the manifest nor the local hash chain provides WORM retention, verified identity, independently trusted time or chain-of-custody compliance.
 
 Never commit snapshots, checkpoints from real workspaces, or case metadata to this public repository.
