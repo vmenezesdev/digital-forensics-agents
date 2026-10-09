@@ -44,6 +44,17 @@ def _check_layout(db, required):
                 f"Unsupported or damaged workspace layout: {table}; "
                 "restore a known-good backup before retrying"
             )
+    definition = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='search_index'"
+    ).fetchone()
+    if not definition or not definition[0] or (
+        "VIRTUAL TABLE" not in definition[0].upper()
+        or "USING FTS5" not in definition[0].upper()
+    ):
+        raise ValueError(
+            "Unsupported or damaged workspace search_index: expected FTS5; "
+            "restore a known-good backup"
+        )
 
 
 _SECURE_DIR_FD = (
