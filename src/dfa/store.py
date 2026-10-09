@@ -64,7 +64,7 @@ _SECURE_DIR_FD = (
 )
 
 
-def _open_confined_file(path, root, flags):
+def _open_confined_file(path, root, flags, root_identity=None):
     """Open beneath a source root without following intermediate symlinks.
 
     This guards file reads, not the separate directory-name discovery by
@@ -82,6 +82,10 @@ def _open_confined_file(path, root, flags):
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     directory_fd = os.open(root, directory_flags)
     try:
+        if root_identity is not None:
+            actual = os.fstat(directory_fd)
+            if (actual.st_dev, actual.st_ino) != root_identity:
+                raise OSError("Registered source root changed during inspection")
         for component in relative.parts[:-1]:
             next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
             os.close(directory_fd)
@@ -91,7 +95,7 @@ def _open_confined_file(path, root, flags):
         os.close(directory_fd)
 
 
-def _inspect_file(path, max_text_bytes=None, root=None):
+def _inspect_file(path, max_text_bytes=None, root=None, root_identity=None):
     """Read one regular file through one descriptor, without following its final symlink.
 
     Memory is bounded by max_text_bytes when textual bytes are requested.
@@ -104,7 +108,7 @@ def _inspect_file(path, max_text_bytes=None, root=None):
         flags |= os.O_NOFOLLOW
     elif Path(path).is_symlink():
         raise OSError("Symbolic links are not allowed")
-    fd = (_open_confined_file(path, root, flags) if root is not None
+    fd = (_open_confined_file(path, root, flags, root_identity=root_identity) if root is not None
           else os.open(path, flags))
     try:
         before = os.fstat(fd)
@@ -131,8 +135,8 @@ def _inspect_file(path, max_text_bytes=None, root=None):
         os.close(fd)
 
 
-def sha256_file(path, root=None):
-    digest, _, _, changed = _inspect_file(path, root=root)
+def sha256_file(path, root=None, root_identity=None):
+    digest, _, _, changed = _inspect_file(path, root=root, root_identity=root_identity)
     if changed:
         raise OSError("File changed while hashing")
     return digest
@@ -227,6 +231,10 @@ class Case:
                 root = Path(row["root"])
                 if root.is_symlink() or not root.is_dir():
                     raise ValueError("Source directory unavailable or replaced by symlink")
+                root_stat = root.stat(follow_symlinks=False)
+                if not stat.S_ISDIR(root_stat.st_mode):
+                    raise ValueError("Registered source root is not a directory")
+                root_identity = (root_stat.st_dev, root_stat.st_ino)
                 db.execute("BEGIN IMMEDIATE")
                 db.execute("CREATE TEMP TABLE seen_paths(relpath TEXT PRIMARY KEY)")
                 counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0, "missing": 0}
@@ -255,7 +263,9 @@ class Case:
                                 status, reason = "excluded", "not_regular"
                             else:
                                 try:
-                                    digest, size, raw, changed = _inspect_file(path, max_text_bytes, root=root)
+                                    digest, size, raw, changed = _inspect_file(
+                                        path, max_text_bytes, root=root, root_identity=root_identity
+                                    )
                                     if changed:
                                         status, reason = "error", "changed_during_read"
                                     elif prior and prior["sha256"] and digest != prior["sha256"]:
@@ -297,6 +307,10 @@ class Case:
                                 "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
                                 (str(evidence_id), body)
                             )
+                ending_root = root.stat(follow_symlinks=False)
+                if ((ending_root.st_dev, ending_root.st_ino) != root_identity
+                        or not stat.S_ISDIR(ending_root.st_mode)):
+                    raise OSError("Registered source root changed during traversal")
                 # Missing paths can only be inferred after an error-free traversal.
                 if counts["errors"] == 0:
                     vanished = db.execute(
