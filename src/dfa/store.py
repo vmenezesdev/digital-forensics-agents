@@ -235,29 +235,34 @@ class Case:
                             (source_id, rel)
                         ).fetchone()
                         digest, size, body, reason = None, None, None, None
-                        if path.is_symlink() or not path.is_file():
-                            status, reason = "excluded", "not_regular"
+                        try:
+                            discovered_mode = path.lstat().st_mode
+                        except OSError:
+                            status, reason = "error", "unavailable_during_inventory"
                         else:
-                            try:
-                                digest, size, raw, changed = _inspect_file(path, max_text_bytes, root=root)
-                                if changed:
-                                    status, reason = "error", "changed_during_read"
-                                elif prior and prior["sha256"] and digest != prior["sha256"]:
-                                    status, reason = "drift", "baseline_mismatch"
-                                elif size > max_text_bytes:
-                                    status, reason = "excluded", "oversized"
-                                elif raw is None:
-                                    status, reason = "error", "content_unavailable"
-                                elif bytes([0]) in raw:
-                                    status, reason = "excluded", "binary"
-                                else:
-                                    try:
-                                        body = raw.decode("utf-8")
-                                        status = "indexed"
-                                    except UnicodeDecodeError:
-                                        status, reason = "excluded", "not_utf8"
-                            except OSError:
-                                status, reason = "error", "unreadable"
+                            if not stat.S_ISREG(discovered_mode):
+                                status, reason = "excluded", "not_regular"
+                            else:
+                                try:
+                                    digest, size, raw, changed = _inspect_file(path, max_text_bytes, root=root)
+                                    if changed:
+                                        status, reason = "error", "changed_during_read"
+                                    elif prior and prior["sha256"] and digest != prior["sha256"]:
+                                        status, reason = "drift", "baseline_mismatch"
+                                    elif size > max_text_bytes:
+                                        status, reason = "excluded", "oversized"
+                                    elif raw is None:
+                                        status, reason = "error", "content_unavailable"
+                                    elif bytes([0]) in raw:
+                                        status, reason = "excluded", "binary"
+                                    else:
+                                        try:
+                                            body = raw.decode("utf-8")
+                                            status = "indexed"
+                                        except UnicodeDecodeError:
+                                            status, reason = "excluded", "not_utf8"
+                                except OSError:
+                                    status, reason = "error", "unreadable"
                         counts["errors" if status == "error" else status] += 1
                         if prior:
                             evidence_id = prior["id"]
