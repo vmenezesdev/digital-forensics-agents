@@ -62,6 +62,16 @@ class SchemaMigrationTests(unittest.TestCase):
         with sqlite3.connect(self.case.db) as db:
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 99)
 
+    def test_known_version_with_fake_fts_table_fails_closed(self):
+        self.case.init()
+        with sqlite3.connect(self.case.db) as db:
+            db.execute("DROP TABLE search_index")
+            db.execute("CREATE TABLE search_index(evidence_id TEXT,body TEXT)")
+        with self.assertRaisesRegex(ValueError, "expected FTS5"):
+            self.case.status()
+        with self.assertRaisesRegex(ValueError, "expected FTS5"):
+            self.case.init()
+
     def test_unknown_partial_layout_is_not_silently_repaired(self):
         with sqlite3.connect(self.case.db) as db:
             db.execute("CREATE TABLE sources(id TEXT PRIMARY KEY, root TEXT)")
