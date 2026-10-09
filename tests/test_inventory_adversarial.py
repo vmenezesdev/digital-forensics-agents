@@ -107,6 +107,33 @@ class InventoryAdversarialTests(unittest.TestCase):
         self.assertEqual(self.case.search("foreign_marker")["results"], [])
         self.assertEqual(self.case.search("original_only")["results"], [])
 
+    def test_verification_detects_real_source_root_swap_during_hash(self):
+        (self.source / "original.txt").write_text("synthetic verifyterm")
+        self.case.ingest("sample")
+        replacement = self.root / "replacement-for-verify"
+        replacement.mkdir()
+        (replacement / "original.txt").write_text("synthetic foreignterm")
+        moved = self.root / "original-moved"
+        real_hash = store.sha256_file
+        swapped = False
+
+        def swap_before_hash(*args, **kwargs):
+            nonlocal swapped
+            if not swapped:
+                self.source.rename(moved)
+                replacement.rename(self.source)
+                swapped = True
+            return real_hash(*args, **kwargs)
+
+        with mock.patch("dfa.store.sha256_file", side_effect=swap_before_hash):
+            report = self.case.verify("sample")
+        self.assertTrue(swapped)
+        self.assertFalse(report["ok"])
+        self.assertIn(
+            {"path": ".", "reason": "source_root_changed_during_verification"},
+            report["issues"]
+        )
+
     def test_denied_directory_aborts_without_claiming_complete_coverage(self):
         target = self.source / "retained.txt"
         target.write_text("synthetic retainedtoken")
