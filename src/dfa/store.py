@@ -332,6 +332,43 @@ class Case:
                     "catalog changes rolled back. Coverage may be outdated."
                 ) from error
 
+    def backup(self, destination):
+        """Create a consistent SQLite snapshot outside the case and source trees."""
+        target = Path(destination).expanduser().absolute()
+        if target.exists() or target.is_symlink():
+            raise ValueError("Backup destination already exists")
+        if not target.parent.is_dir():
+            raise ValueError("Backup parent directory does not exist")
+        if target == self.root or self.root in target.parents:
+            raise ValueError("Backup must be stored outside the case workspace")
+        with self.connect() as db:
+            for row in db.execute("SELECT root FROM sources"):
+                source = Path(row["root"])
+                if target == source or source in target.parents:
+                    raise ValueError("Backup must not modify a registered source")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(target, flags, 0o600)
+            os.close(fd)
+            try:
+                backup_db = sqlite3.connect(target)
+                try:
+                    db.backup(backup_db)
+                    if backup_db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise ValueError("Backup integrity check failed")
+                finally:
+                    backup_db.close()
+                digest = sha256_file(target)
+            except BaseException:
+                target.unlink(missing_ok=True)
+                raise
+        return {
+            "backup": str(target), "sha256": digest,
+            "limitation": (
+                "SQLite snapshot only; externally referenced source bytes are not copied. "
+                "Store separately with access controls and a documented retention policy."
+            )
+        }
+
     def index_rebuild(self, max_text_bytes=1048576):
         """Atomically reconstruct disposable FTS from unchanged, verified source bytes.
 
