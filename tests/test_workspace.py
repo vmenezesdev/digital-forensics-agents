@@ -203,6 +203,7 @@ class WorkspaceTests(unittest.TestCase):
                 "indexed"
             )
         self.assertFalse(self.case.search("retained")["complete"])
+        self.assertEqual(self.case.search("retained")["results"], [])
 
         complete = self.case.ingest("sample")
         self.assertEqual(complete["scan_status"], "complete")
@@ -213,6 +214,27 @@ class WorkspaceTests(unittest.TestCase):
                 "missing"
             )
         self.assertEqual(self.case.search("retained")["results"], [])
+
+    def test_failed_latest_inventory_suppresses_prior_search_hits(self):
+        old = self.source/"indexed.txt"
+        old.write_text("synthetic_stale_token")
+        self.case.ingest("sample")
+        self.assertEqual(len(self.case.search("synthetic_stale_token")["results"]), 1)
+
+        def failed_walk(*args, **kwargs):
+            kwargs["onerror"](PermissionError("synthetic traversal failure"))
+            yield from ()
+
+        with mock.patch("dfa.store.os.walk", side_effect=failed_walk):
+            with self.assertRaisesRegex(ValueError, "rolled back"):
+                self.case.ingest("sample")
+
+        receipt = self.case.search("synthetic_stale_token")
+        self.assertEqual(receipt["results"], [])
+        self.assertEqual(receipt["inventory"]["sample"]["status"], "failed")
+
+        self.case.ingest("sample")
+        self.assertEqual(len(self.case.search("synthetic_stale_token")["results"]), 1)
 
     def test_file_read_failure_creates_partial_inventory(self):
         (self.source/"unreadable.txt").write_text("secret")
