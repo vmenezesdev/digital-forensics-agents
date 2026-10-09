@@ -45,16 +45,19 @@ def verify(db):
     ):
         if row["previous_hash"] != expected:
             return {"ok": False, "checked": count,
-                    "invalid_event_id": row["id"], "reason": "broken_link"}
+                    "invalid_event_id": row["id"], "reason": "broken_link",
+                    "trust_boundary": TRUST_BOUNDARY}
         actual = _checksum(expected, row["created"], row["actor"],
                            row["action"], row["payload"])
         if row["event_hash"] != actual:
             return {"ok": False, "checked": count,
-                    "invalid_event_id": row["id"], "reason": "digest_mismatch"}
+                    "invalid_event_id": row["id"], "reason": "digest_mismatch",
+                    "trust_boundary": TRUST_BOUNDARY}
         expected = row["event_hash"]
         count += 1
     return {"ok": True, "checked": count, "head": expected,
-            "limitation": "Database administrators can rewrite both events and hashes"}
+            "limitation": "Database administrators can rewrite both events and hashes",
+            "trust_boundary": TRUST_BOUNDARY}
 
 # A manifest is only useful when copied outside this mutable case database.
 CHECKPOINT_FORMAT = "dfa-audit-checkpoint-v1"
