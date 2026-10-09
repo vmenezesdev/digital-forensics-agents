@@ -39,6 +39,9 @@ def main(argv=None):
                   "message-post":lambda:case.message_post(x.id,x.actor,x.body)}
         result=commands[x.action]()
         print(json.dumps(result,indent=2))
+        # Explicit integrity checks must fail process-level automation if unsafe.
+        if x.action in ("verify", "audit-verify") and result.get("ok") is False:
+            return 2
         return 0
     except (ValueError,OSError) as error:
         print(json.dumps({"error":str(error)}),file=sys.stderr)
