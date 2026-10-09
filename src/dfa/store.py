@@ -535,24 +535,46 @@ class Case:
 
     def verify(self, source_id):
         with self.connect() as db:
-            row=db.execute("SELECT root FROM sources WHERE id=?",(source_id,)).fetchone()
+            row = db.execute("SELECT root FROM sources WHERE id=?", (source_id,)).fetchone()
             if row is None:
                 raise ValueError("Unknown source")
-            source_root=Path(row["root"])
+            source_root = Path(row["root"])
             if source_root.is_symlink() or not source_root.is_dir():
-                return {"ok":False,"issues":[{"path":".","reason":"source_root_unavailable_or_symlink"}]}
-            issues=[]
-            for r in db.execute("SELECT relpath,sha256 FROM evidence WHERE source_id=?",(source_id,)):
-                p=Path(row["root"])/r["relpath"]
-                if p.is_symlink() or not p.is_file():
-                    issues.append({"path":r["relpath"],"reason":"missing_or_symlink"})
+                return {"ok": False, "issues": [
+                    {"path": ".", "reason": "source_root_unavailable_or_symlink"}
+                ]}
+            try:
+                initial_root = source_root.stat(follow_symlinks=False)
+            except OSError:
+                return {"ok": False, "issues": [
+                    {"path": ".", "reason": "source_root_unavailable_or_symlink"}
+                ]}
+            root_identity = (initial_root.st_dev, initial_root.st_ino)
+            issues = []
+            for r in db.execute(
+                "SELECT relpath,sha256 FROM evidence WHERE source_id=?", (source_id,)
+            ):
+                path = source_root / r["relpath"]
+                if path.is_symlink() or not path.is_file():
+                    issues.append({"path": r["relpath"], "reason": "missing_or_symlink"})
                 elif r["sha256"]:
                     try:
-                        if sha256_file(p, root=source_root) != r["sha256"]:
-                            issues.append({"path":r["relpath"],"reason":"digest_mismatch"})
+                        if sha256_file(path, root=source_root,
+                                       root_identity=root_identity) != r["sha256"]:
+                            issues.append({"path": r["relpath"], "reason": "digest_mismatch"})
                     except OSError:
-                        issues.append({"path":r["relpath"],"reason":"unreadable_or_changed"})
-        return {"ok":not issues,"issues":issues}
+                        issues.append({"path": r["relpath"], "reason": "unreadable_or_changed"})
+            try:
+                ending_root = source_root.stat(follow_symlinks=False)
+                unchanged = (
+                    stat.S_ISDIR(ending_root.st_mode)
+                    and (ending_root.st_dev, ending_root.st_ino) == root_identity
+                )
+            except OSError:
+                unchanged = False
+            if not unchanged:
+                issues.append({"path": ".", "reason": "source_root_changed_during_verification"})
+        return {"ok": not issues, "issues": issues}
 
     def task_add(self, title):
         with self.connect() as db:
