@@ -241,10 +241,12 @@ class Case:
                 def walk_error(error):
                     raise error
                 for folder, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+                    symlink_dirs = set()
                     for directory in list(dirs):
                         if (Path(folder)/directory).is_symlink():
                             dirs.remove(directory)
                             files.append(directory)
+                            symlink_dirs.add(directory)
                     for filename in files:
                         path = Path(folder)/filename
                         rel = path.relative_to(root).as_posix()
@@ -259,7 +261,9 @@ class Case:
                         except OSError:
                             status, reason = "error", "unavailable_during_inventory"
                         else:
-                            if not stat.S_ISREG(discovered_mode):
+                            if filename in symlink_dirs:
+                                status, reason = "error", "symlink_directory"
+                            elif not stat.S_ISREG(discovered_mode):
                                 status, reason = "excluded", "not_regular"
                             else:
                                 try:
