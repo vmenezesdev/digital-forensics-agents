@@ -66,6 +66,14 @@ class BackupTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "registered source"):
             self.case.backup(self.source / "backup.sqlite3")
         self.assertFalse((self.source / "backup.sqlite3").exists())
+        alias = self.root / "source-alias"
+        try:
+            alias.symlink_to(self.source, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink aliases unavailable on this runner")
+        with self.assertRaisesRegex(ValueError, "registered source"):
+            self.case.backup(alias / "nested-backup.sqlite3")
+        self.assertFalse((self.source / "nested-backup.sqlite3").exists())
 
 
 if __name__ == "__main__":
