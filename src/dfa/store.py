@@ -344,12 +344,16 @@ class Case:
             raise ValueError("Backup destination already exists")
         if not target.parent.is_dir():
             raise ValueError("Backup parent directory does not exist")
-        if target == self.root or self.root in target.parents:
+        # Also reject aliases through parent-directory symlinks. These checks
+        # cannot defend against hostile concurrent changes to the filesystem.
+        canonical_target = target.parent.resolve() / target.name
+        case_root = self.root.resolve()
+        if canonical_target == case_root or case_root in canonical_target.parents:
             raise ValueError("Backup must be stored outside the case workspace")
         with self.connect() as db:
             for row in db.execute("SELECT root FROM sources"):
-                source = Path(row["root"])
-                if target == source or source in target.parents:
+                source = Path(row["root"]).resolve()
+                if canonical_target == source or source in canonical_target.parents:
                     raise ValueError("Backup must not modify a registered source")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             fd = os.open(target, flags, 0o600)
