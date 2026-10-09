@@ -221,21 +221,23 @@ class Case:
                                 "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
                                 (str(evidence_id), body)
                             )
-                vanished = db.execute(
-                    "SELECT id FROM evidence WHERE source_id=? AND relpath NOT IN "
-                    "(SELECT relpath FROM seen_paths) AND status!='missing'",
-                    (source_id,)
-                ).fetchall()
-                for record in vanished:
-                    db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(record["id"]),))
-                    db.execute(
-                        "UPDATE evidence SET status='missing',reason='not_in_latest_inventory' WHERE id=?",
-                        (record["id"],)
-                    )
-                counts["missing"] = db.execute(
-                    "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
-                    (source_id,)
-                ).fetchone()[0]
+                # Missing paths can only be inferred after an error-free traversal.
+                if counts["errors"] == 0:
+                    vanished = db.execute(
+                        "SELECT id FROM evidence WHERE source_id=? AND relpath NOT IN "
+                        "(SELECT relpath FROM seen_paths) AND status!='missing'",
+                        (source_id,)
+                    ).fetchall()
+                    for record in vanished:
+                        db.execute("DELETE FROM search_index WHERE evidence_id=?", (str(record["id"]),))
+                        db.execute(
+                            "UPDATE evidence SET status='missing',reason='not_in_latest_inventory' WHERE id=?",
+                            (record["id"],)
+                        )
+                    counts["missing"] = db.execute(
+                        "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
+                        (source_id,)
+                    ).fetchone()[0]
                 scan_status = "partial" if counts["errors"] else "complete"
                 db.execute(
                     "UPDATE inventory_runs SET finished=?,status=?,counts=? WHERE id=?",
