@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+from pathlib import Path
 from .store import Case
 
 def main(argv=None):
@@ -9,7 +10,8 @@ def main(argv=None):
     subs=p.add_subparsers(dest="action",required=True)
     subs.add_parser("init")
     subs.add_parser("status")
-    subs.add_parser("audit-verify")
+    a=subs.add_parser("audit-verify");a.add_argument("--checkpoint",type=Path)
+    subs.add_parser("audit-checkpoint")
     subs.add_parser("task-list")
     a=subs.add_parser("message-list");a.add_argument("id",type=int)
     a=subs.add_parser("source-add");a.add_argument("source_id");a.add_argument("path")
@@ -24,7 +26,8 @@ def main(argv=None):
     case=Case(x.case)
     try:
         commands={"init":lambda:case.init(),"status":lambda:case.status(),
-                  "audit-verify":lambda:case.audit_verify(),
+                  "audit-verify":lambda:case.audit_verify(json.loads(x.checkpoint.read_text(encoding="utf-8")) if x.checkpoint else None),
+                  "audit-checkpoint":lambda:case.audit_checkpoint(),
                   "task-list":lambda:case.task_list(),"message-list":lambda:case.message_list(x.id),"source-add":lambda:case.source_add(x.source_id,x.path),
                   "ingest":lambda:case.ingest(x.source_id),"verify":lambda:case.verify(x.source_id),
                   "search":lambda:case.search(x.query),"task-add":lambda:case.task_add(x.title),
