@@ -417,6 +417,7 @@ class Case:
             db.execute("DELETE FROM search_index")
             rebuilt = 0
             skipped_unverified = 0
+            root_identities = {}
             for row in db.execute(
                 "SELECT e.id,e.relpath,e.sha256,e.size,e.source_id,s.root "
                 "FROM evidence e JOIN sources s ON s.id=e.source_id "
@@ -435,9 +436,23 @@ class Case:
                         f"Cannot rebuild index for unavailable source {row['source_id']}; "
                         "previous index retained"
                     )
+                if row["source_id"] not in root_identities:
+                    try:
+                        initial_root = root.stat(follow_symlinks=False)
+                    except OSError as error:
+                        raise ValueError(
+                            f"Cannot rebuild index for unavailable source {row['source_id']}"
+                        ) from error
+                    if not stat.S_ISDIR(initial_root.st_mode):
+                        raise ValueError("Registered source root is not a directory")
+                    root_identities[row["source_id"]] = (
+                        root, (initial_root.st_dev, initial_root.st_ino)
+                    )
+                root_identity = root_identities[row["source_id"]][1]
                 try:
                     digest, size, raw, changed = _inspect_file(
-                        root / row["relpath"], max_text_bytes, root=root
+                        root / row["relpath"], max_text_bytes,
+                        root=root, root_identity=root_identity
                     )
                 except OSError as error:
                     raise ValueError(
@@ -462,6 +477,20 @@ class Case:
                     (str(row["id"]), body)
                 )
                 rebuilt += 1
+            for source_id, (root, expected_identity) in root_identities.items():
+                try:
+                    final_root = root.stat(follow_symlinks=False)
+                    same_root = (
+                        stat.S_ISDIR(final_root.st_mode)
+                        and (final_root.st_dev, final_root.st_ino) == expected_identity
+                    )
+                except OSError:
+                    same_root = False
+                if not same_root:
+                    raise ValueError(
+                        f"Source root {source_id} changed during index rebuild; "
+                        "previous index retained"
+                    )
             audit.append(db, "operator", "index.rebuild", {
                 "rebuilt": rebuilt, "skipped_unverified": skipped_unverified,
                 "max_text_bytes": max_text_bytes
