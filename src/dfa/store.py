@@ -332,6 +332,78 @@ class Case:
                     "catalog changes rolled back. Coverage may be outdated."
                 ) from error
 
+    def index_rebuild(self, max_text_bytes=1048576):
+        """Atomically reconstruct disposable FTS from unchanged, verified source bytes.
+
+        Never edits source files, baseline digests, evidence statuses, or receipts.
+        A failed source read or digest mismatch leaves the previous FTS intact.
+        Sources without a complete latest scan are deliberately excluded.
+        """
+        if not 0 <= max_text_bytes <= 4194304:
+            raise ValueError("Invalid limit")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM search_index")
+            rebuilt = 0
+            skipped_unverified = 0
+            for row in db.execute(
+                "SELECT e.id,e.relpath,e.sha256,e.size,e.source_id,s.root "
+                "FROM evidence e JOIN sources s ON s.id=e.source_id "
+                "WHERE e.status='indexed' ORDER BY e.id"
+            ):
+                latest = db.execute(
+                    "SELECT status FROM inventory_runs WHERE source_id=? "
+                    "ORDER BY id DESC LIMIT 1", (row["source_id"],)
+                ).fetchone()
+                if not latest or latest["status"] != "complete":
+                    skipped_unverified += 1
+                    continue
+                root = Path(row["root"])
+                if root.is_symlink() or not root.is_dir():
+                    raise ValueError(
+                        f"Cannot rebuild index for unavailable source {row['source_id']}; "
+                        "previous index retained"
+                    )
+                try:
+                    digest, size, raw, changed = _inspect_file(
+                        root / row["relpath"], max_text_bytes, root=root
+                    )
+                except OSError as error:
+                    raise ValueError(
+                        f"Cannot rebuild index for unreadable evidence id {row['id']}; "
+                        "previous index retained"
+                    ) from error
+                if (changed or not row["sha256"] or digest != row["sha256"]
+                        or size != row["size"] or raw is None or b"\\x00" in raw):
+                    raise ValueError(
+                        f"Cannot rebuild index for changed/incompatible evidence id {row['id']}; "
+                        "previous index retained"
+                    )
+                try:
+                    body = raw.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise ValueError(
+                        f"Cannot rebuild index for non-UTF8 evidence id {row['id']}; "
+                        "previous index retained"
+                    ) from error
+                db.execute(
+                    "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
+                    (str(row["id"]), body)
+                )
+                rebuilt += 1
+            audit.append(db, "operator", "index.rebuild", {
+                "rebuilt": rebuilt, "skipped_unverified": skipped_unverified,
+                "max_text_bytes": max_text_bytes
+            })
+            return {
+                "rebuilt": rebuilt,
+                "skipped_unverified": skipped_unverified,
+                "limitation": (
+                    "Source bytes were reread only where the latest scan is complete; "
+                    "this is an index projection, not evidence acquisition"
+                )
+            }
+
     def search(self, query, limit=20):
         if not query or not query.strip() or not 1 <= limit <= 100:
             raise ValueError("Invalid query or result limit")
