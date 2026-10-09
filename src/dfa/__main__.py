@@ -1,5 +1,6 @@
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from .store import Case
@@ -43,7 +44,7 @@ def main(argv=None):
         if x.action in ("verify", "audit-verify") and result.get("ok") is False:
             return 2
         return 0
-    except (ValueError,OSError) as error:
+    except (ValueError, OSError, sqlite3.DatabaseError) as error:
         print(json.dumps({"error":str(error)}),file=sys.stderr)
         return 1
 
