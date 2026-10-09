@@ -410,6 +410,11 @@ class Case:
             return {"sources":sources,"evidence":evidence,"tasks":tasks,"latest_inventory":scans,
                     "scope":"Recorded catalog state, not evidence acquisition completeness"}
 
-    def audit_verify(self):
+    def audit_verify(self, checkpoint=None):
         with self.connect() as db:
-            return audit.verify(db)
+            return (audit.verify_checkpoint(db, checkpoint)
+                    if checkpoint is not None else audit.verify(db))
+
+    def audit_checkpoint(self):
+        with self.connect() as db:
+            return audit.checkpoint(db)
