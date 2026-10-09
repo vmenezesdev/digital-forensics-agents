@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from dfa import store
 from dfa.store import Case
 
 
@@ -94,6 +95,33 @@ class IndexRebuildTests(unittest.TestCase):
             [x["source_id"] for x in self.case.search("sharedterm")["results"]],
             ["other"]
         )
+
+    def test_source_root_replacement_during_rebuild_aborts_atomically(self):
+        (self.source / "one.txt").write_text("synthetic stablecontent")
+        self.case.ingest("sample")
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        (replacement / "one.txt").write_text("synthetic stablecontent")
+        moved = self.root / "moved-original"
+        original_inspect = store._inspect_file
+        swapped = False
+
+        def switch_after_read(*args, **kwargs):
+            nonlocal swapped
+            result = original_inspect(*args, **kwargs)
+            if not swapped:
+                self.source.rename(moved)
+                replacement.rename(self.source)
+                swapped = True
+            return result
+
+        with mock.patch("dfa.store._inspect_file", side_effect=switch_after_read):
+            with self.assertRaisesRegex(ValueError, "changed during index rebuild"):
+                self.case.index_rebuild()
+
+        self.assertTrue(swapped)
+        with sqlite3.connect(self.case.db) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM search_index").fetchone()[0], 1)
 
     def test_cli_rebuild_runs_in_separate_process(self):
         (self.source / "one.txt").write_text("synthetic clirebuild")
