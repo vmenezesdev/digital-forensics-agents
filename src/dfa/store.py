@@ -497,6 +497,11 @@ class Case:
             db.execute("INSERT INTO receipts(query,created,report) VALUES(?,?,?)",
                        (query, time.time(), json.dumps(receipt, sort_keys=True)))
             receipt["receipt_id"] = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            audit.append(db, "operator", "search.query", {
+                "receipt_id": receipt["receipt_id"],
+                "result_count": len(receipt["results"]),
+                "truncated": receipt["truncated"],
+            })
             return receipt
 
     def verify(self, source_id):
