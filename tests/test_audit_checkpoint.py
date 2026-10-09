@@ -33,6 +33,15 @@ class AuditCheckpointTests(unittest.TestCase):
         self.assertEqual(verification["reason"], "checkpoint_count_mismatch")
         self.assertIn("mutable", verification["trust_boundary"])
 
+    def test_checkpoint_still_verifies_after_legitimate_new_events(self):
+        self.case.task_add("synthetic original")
+        manifest = self.case.audit_checkpoint()
+        self.case.task_add("synthetic later")
+        report = self.case.audit_verify(manifest)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["checkpoint_anchored_events"], 1)
+        self.assertEqual(report["events_after_checkpoint"], 1)
+
     def test_external_checkpoint_detects_locally_rehashed_history(self):
         self.case.task_add("synthetic task")
         manifest = self.case.audit_checkpoint()
