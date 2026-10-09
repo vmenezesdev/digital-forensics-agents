@@ -12,6 +12,7 @@ def main(argv=None):
     subs.add_parser("status")
     a=subs.add_parser("audit-verify");a.add_argument("--checkpoint",type=Path)
     subs.add_parser("audit-checkpoint")
+    a=subs.add_parser("index-rebuild");a.add_argument("--max-text-bytes",type=int,default=1048576)
     subs.add_parser("task-list")
     a=subs.add_parser("message-list");a.add_argument("id",type=int)
     a=subs.add_parser("source-add");a.add_argument("source_id");a.add_argument("path")
@@ -28,6 +29,7 @@ def main(argv=None):
         commands={"init":lambda:case.init(),"status":lambda:case.status(),
                   "audit-verify":lambda:case.audit_verify(json.loads(x.checkpoint.read_text(encoding="utf-8")) if x.checkpoint else None),
                   "audit-checkpoint":lambda:case.audit_checkpoint(),
+                  "index-rebuild":lambda:case.index_rebuild(x.max_text_bytes),
                   "task-list":lambda:case.task_list(),"message-list":lambda:case.message_list(x.id),"source-add":lambda:case.source_add(x.source_id,x.path),
                   "ingest":lambda:case.ingest(x.source_id),"verify":lambda:case.verify(x.source_id),
                   "search":lambda:case.search(x.query),"task-add":lambda:case.task_add(x.title),
