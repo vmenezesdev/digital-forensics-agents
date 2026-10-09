@@ -238,6 +238,9 @@ class Case:
                         "SELECT COUNT(*) FROM evidence WHERE source_id=? AND status='missing'",
                         (source_id,)
                     ).fetchone()[0]
+                # A partial scan cannot establish the number of absent paths.
+                if counts["errors"]:
+                    counts["missing"] = None
                 scan_status = "partial" if counts["errors"] else "complete"
                 db.execute(
                     "UPDATE inventory_runs SET finished=?,status=?,counts=? WHERE id=?",
