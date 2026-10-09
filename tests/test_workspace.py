@@ -196,7 +196,7 @@ class WorkspaceTests(unittest.TestCase):
 
         self.assertEqual(partial["scan_status"], "partial")
         self.assertEqual(partial["errors"], 1)
-        self.assertEqual(partial["missing"], 0)
+        self.assertIsNone(partial["missing"])
         with sqlite3.connect(self.case.db) as db:
             self.assertEqual(
                 db.execute("SELECT status FROM evidence WHERE relpath='retained.txt'").fetchone()[0],
@@ -242,6 +242,7 @@ class WorkspaceTests(unittest.TestCase):
             result=self.case.ingest("sample")
         self.assertEqual(result["scan_status"],"partial")
         self.assertEqual(result["errors"],1)
+        self.assertIsNone(result["missing"])
         self.assertEqual(self.case.search("secret")["results"],[])
         self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"],"partial")
 
