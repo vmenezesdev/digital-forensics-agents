@@ -76,6 +76,37 @@ class InventoryAdversarialTests(unittest.TestCase):
         self.assertEqual((digest, status, reason), (original, "error", "changed_during_read"))
         self.assertEqual(self.case.search("stabletoken")["results"], [])
 
+    def test_real_directory_source_root_swap_rolls_back_instead_of_indexing_replacement(self):
+        (self.source / "original.txt").write_text("synthetic original_only")
+        self.case.ingest("sample")
+        replacement = self.root / "replacement"
+        replacement.mkdir()
+        (replacement / "foreign.txt").write_text("synthetic foreign_marker")
+        moved = self.root / "moved-source"
+        real_walk = os.walk
+        swapped = False
+
+        def substitute_real_directory(*args, **kwargs):
+            nonlocal swapped
+            self.source.rename(moved)
+            replacement.rename(self.source)
+            swapped = True
+            yield from real_walk(*args, **kwargs)
+
+        with mock.patch("dfa.store.os.walk", side_effect=substitute_real_directory):
+            with self.assertRaisesRegex(ValueError, "rolled back"):
+                self.case.ingest("sample")
+
+        self.assertTrue(swapped)
+        self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"], "failed")
+        with sqlite3.connect(self.case.db) as db:
+            records = db.execute(
+                "SELECT relpath,status FROM evidence ORDER BY id"
+            ).fetchall()
+        self.assertEqual(records, [("original.txt", "indexed")])
+        self.assertEqual(self.case.search("foreign_marker")["results"], [])
+        self.assertEqual(self.case.search("original_only")["results"], [])
+
     def test_denied_directory_aborts_without_claiming_complete_coverage(self):
         target = self.source / "retained.txt"
         target.write_text("synthetic retainedtoken")
