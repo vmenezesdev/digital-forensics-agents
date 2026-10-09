@@ -236,6 +236,26 @@ class WorkspaceTests(unittest.TestCase):
         self.case.ingest("sample")
         self.assertEqual(len(self.case.search("synthetic_stale_token")["results"]), 1)
 
+    def test_partial_source_does_not_hide_other_complete_sources(self):
+        other_root = Path(self.tmp.name)/"other-source"
+        other_root.mkdir()
+        (other_root/"other.txt").write_text("synthetic_sharedterm")
+        self.case.source_add("other", other_root)
+        self.case.ingest("other")
+
+        (self.source/"first.txt").write_text("synthetic_sharedterm")
+        self.case.ingest("sample")
+        self.assertEqual(len(self.case.search("synthetic_sharedterm")["results"]), 2)
+
+        with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic failure")):
+            partial = self.case.ingest("sample")
+        self.assertEqual(partial["scan_status"], "partial")
+
+        receipt = self.case.search("synthetic_sharedterm")
+        self.assertEqual([item["source_id"] for item in receipt["results"]], ["other"])
+        self.assertEqual(receipt["inventory"]["sample"]["status"], "partial")
+        self.assertEqual(receipt["inventory"]["other"]["status"], "complete")
+
     def test_file_read_failure_creates_partial_inventory(self):
         (self.source/"unreadable.txt").write_text("secret")
         with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic read error")):
