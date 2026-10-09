@@ -75,12 +75,15 @@ class IndexRebuildTests(unittest.TestCase):
 
     def test_rebuild_skips_incomplete_source_but_keeps_other_source_searchable(self):
         (self.source / "sample.txt").write_text("synthetic sharedterm")
+        unseen = self.source / "unseen.txt"
+        unseen.write_text("synthetic retainedtext")
         self.case.ingest("sample")
         other = self.root / "other-synthetic-source"
         other.mkdir()
         (other / "other.txt").write_text("synthetic sharedterm")
         self.case.source_add("other", other)
         self.case.ingest("other")
+        unseen.unlink()  # Prior row remains indexed until a complete traversal.
         with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic failure")):
             partial = self.case.ingest("sample")
         self.assertEqual(partial["scan_status"], "partial")
