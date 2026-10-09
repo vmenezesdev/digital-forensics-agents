@@ -16,3 +16,9 @@ This is an experimental repository for auditable AI-assisted digital forensics.
 ## Development planning
 
 Use [docs/roadmap.md](docs/roadmap.md) for milestone sequencing and the linked GitHub issues for scope and acceptance criteria. Reference an issue in each small, testable commit directly to `trunk`. Do not create feature branches by default during initial accelerated development. Mark an issue complete only after its acceptance tests pass in CI. The roadmap is sequencing guidance; GitHub Issues remain the actionable backlog.
+
+## Inventory conformance note
+
+See [text-size bounds](docs/inventory-bounds.md) for synthetic coverage of
+excluded text, stale search projections and the difference between traversal
+completion and search completeness (issue #2).
