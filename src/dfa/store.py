@@ -374,7 +374,7 @@ class Case:
                         "previous index retained"
                     ) from error
                 if (changed or not row["sha256"] or digest != row["sha256"]
-                        or size != row["size"] or raw is None or b"\\x00" in raw):
+                        or size != row["size"] or raw is None or bytes([0]) in raw):
                     raise ValueError(
                         f"Cannot rebuild index for changed/incompatible evidence id {row['id']}; "
                         "previous index retained"
