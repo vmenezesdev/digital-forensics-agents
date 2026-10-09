@@ -183,6 +183,37 @@ class WorkspaceTests(unittest.TestCase):
         self.assertFalse(receipt["complete"])
         self.assertEqual(self.case.status()["latest_inventory"]["sample"]["status"],"failed")
 
+    def test_partial_inventory_preserves_unseen_evidence_until_complete_scan(self):
+        retained = self.source/"retained.txt"
+        retained.write_text("synthetic retained token")
+        self.case.ingest("sample")
+        retained.unlink()
+        unreadable = self.source/"unreadable.txt"
+        unreadable.write_text("synthetic unreadable token")
+
+        with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic read error")):
+            partial = self.case.ingest("sample")
+
+        self.assertEqual(partial["scan_status"], "partial")
+        self.assertEqual(partial["errors"], 1)
+        self.assertEqual(partial["missing"], 0)
+        with sqlite3.connect(self.case.db) as db:
+            self.assertEqual(
+                db.execute("SELECT status FROM evidence WHERE relpath='retained.txt'").fetchone()[0],
+                "indexed"
+            )
+        self.assertFalse(self.case.search("retained")["complete"])
+
+        complete = self.case.ingest("sample")
+        self.assertEqual(complete["scan_status"], "complete")
+        self.assertEqual(complete["missing"], 1)
+        with sqlite3.connect(self.case.db) as db:
+            self.assertEqual(
+                db.execute("SELECT status FROM evidence WHERE relpath='retained.txt'").fetchone()[0],
+                "missing"
+            )
+        self.assertEqual(self.case.search("retained")["results"], [])
+
     def test_file_read_failure_creates_partial_inventory(self):
         (self.source/"unreadable.txt").write_text("secret")
         with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic read error")):
