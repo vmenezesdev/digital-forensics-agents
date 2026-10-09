@@ -19,6 +19,12 @@ For source inventory and verification, the reference now opens each path compone
 
 **What this does not cover:** `os.walk` still discovers names through normal paths and may encounter changes during traversal, so name discovery and completeness are not race-free. Directory components **above** the registered root can be replaced; the root mount and filesystem are not attested, and an attacker who can rewrite source bytes in place may still race reads. No chain-of-custody or exhaustive acquisition claim is justified. Further race-safe traversal and scan conformance tests are tracked in [#2](https://github.com/vmenezesdev/digital-forensics-agents/issues/2).
 
+## Source-root identity within one operation (refs #2)
+
+Inventory, verification and FTS reconstruction now record the source directory's filesystem identity (`st_dev`, `st_ino`) at operation start. Confined opens compare the actual root **directory descriptor** against this identity, and the operation compares the root pathname identity again before declaring success. A synthetic swap of the registered source path for a different real directory is rejected; inventory and FTS reconstruction roll back transactional catalog/index writes.
+
+This is **not** persistent identity attestation or race-free enumeration. `os.walk` still uses path-based discovery; a directory can be substituted and restored between checks, a live filesystem can change without a stable snapshot, and an already replaced source before operation start can be mistaken for the registered one. Filesystem trust, acquisition identity and mount provenance remain out of scope for the prototype.
+
 ## Inventory run status (refs #2)
 
 Every ingest attempt records a row in `inventory_runs` with its source identifier, start/end timestamps, final state and attempt counts. A successful directory traversal with unreadable files is **partial**, not complete. An unsuccessful traversal is **failed**: catalog/index edits from that attempt roll back, and the failed attempt itself remains recorded. Vanished files are reconciled only after a traversal with no reported read or walk errors. During a partial scan, the count of missing files is **unknown** (null), not zero. Search receipts expose the latest scan state, and cached hits from partial or failed sources are **not returned** until a complete new scan; unrelated complete sources remain searchable.
