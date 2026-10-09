@@ -19,6 +19,33 @@ CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY,title TEXT,status TEXT D
 CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,task_id INTEGER,author TEXT,body TEXT,created REAL);
 """
 
+SCHEMA_VERSION = 1
+# Minimum columns required by the legacy unversioned workspace.
+_REQUIRED_COLUMNS = {
+    "sources": {"id", "root"},
+    "evidence": {"id", "source_id", "relpath", "sha256", "size", "status", "reason"},
+    "search_index": {"evidence_id", "body"},
+    "receipts": {"id", "query", "created", "report"},
+    "tasks": {"id", "title", "status", "owner", "token", "lease_until"},
+    "messages": {"id", "task_id", "author", "body", "created"},
+}
+_VERSIONED_COLUMNS = {
+    **_REQUIRED_COLUMNS,
+    "inventory_runs": {"id", "source_id", "started", "finished", "status", "error", "counts"},
+    "audit_events": {"id", "created", "actor", "action", "payload", "previous_hash", "event_hash"},
+}
+
+
+def _check_layout(db, required):
+    for table, columns in required.items():
+        actual = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if not columns.issubset(actual):
+            raise ValueError(
+                f"Unsupported or damaged workspace layout: {table}; "
+                "restore a known-good backup before retrying"
+            )
+
+
 _SECURE_DIR_FD = (
     os.open in os.supports_dir_fd
     and hasattr(os, "O_DIRECTORY")
@@ -110,15 +137,48 @@ class Case:
         if not self.db.is_file():
             raise ValueError("Case not initialized")
         db = sqlite3.connect(self.db, timeout=30)
+        try:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version != SCHEMA_VERSION:
+                raise ValueError(
+                    f"Workspace schema version {version} unsupported; "
+                    "run 'dfa --case CASE_PATH init' to upgrade a legacy v0 "
+                    "workspace, or restore a compatible backup"
+                )
+            _check_layout(db, _VERSIONED_COLUMNS)
+        except Exception:
+            db.close()
+            raise
         db.row_factory = sqlite3.Row
         return db
 
     def init(self):
         self.root.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db) as db:
-            db.executescript(SCHEMA)
-            db.executescript(audit.SCHEMA)
-        return {"case": str(self.root)}
+        with sqlite3.connect(self.db, timeout=30) as db:
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, SCHEMA_VERSION):
+                raise ValueError(
+                    f"Workspace schema version {version} unsupported; "
+                    "restore a compatible backup instead of downgrading"
+                )
+            if version == 0:
+                existing = db.execute(
+                    "SELECT COUNT(*) FROM sqlite_master "
+                    "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchone()[0]
+                if existing:
+                    _check_layout(db, _REQUIRED_COLUMNS)
+                # Execute statements individually; executescript() would commit
+                # early and defeat atomic migration/rollback.
+                for statement in (SCHEMA + audit.SCHEMA).split(";"):
+                    if statement.strip():
+                        db.execute(statement)
+                _check_layout(db, _VERSIONED_COLUMNS)
+                db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            else:
+                _check_layout(db, _VERSIONED_COLUMNS)
+        return {"case": str(self.root), "schema_version": SCHEMA_VERSION}
 
     def source_add(self, source_id, folder):
         p = Path(folder).expanduser().absolute()
