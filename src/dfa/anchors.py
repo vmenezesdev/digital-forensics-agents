@@ -2,6 +2,7 @@
 import re
 
 _FIELDS = frozenset({"version", "type", "source_id", "evidence_id", "sha256", "start", "end"})
+_FIELDS_V2 = _FIELDS | {"registration_id"}
 _SQLITE_MAX_ROWID = (1 << 63) - 1
 
 
@@ -11,10 +12,18 @@ def validate_byte_range_anchor(anchor, evidence):
     An accepted anchor is *catalog-consistent*, not proof that external source
     bytes still exist or match the digest. IDs are local to a single case DB.
     """
-    if not isinstance(anchor, dict) or set(anchor) != _FIELDS:
+    if not isinstance(anchor, dict):
         raise ValueError("Invalid byte-range anchor fields")
-    if type(anchor["version"]) is not int or anchor["version"] != 1:
+    version = anchor.get("version")
+    if type(version) is not int or version not in (1, 2):
         raise ValueError("Unsupported anchor version")
+    if set(anchor) != (_FIELDS if version == 1 else _FIELDS_V2):
+        raise ValueError("Invalid byte-range anchor fields")
+    if version == 2 and (
+        not isinstance(anchor["registration_id"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", anchor["registration_id"]) is None
+    ):
+        raise ValueError("Invalid source registration reference")
     if anchor["type"] != "byte_range":
         raise ValueError("Unsupported anchor type")
     if not isinstance(anchor["source_id"], str) or not anchor["source_id"]:
@@ -55,6 +64,28 @@ def make_byte_range_anchor(evidence, start, end):
     return validate_byte_range_anchor(anchor, evidence)
 
 
+def make_registered_byte_range_anchor(case, evidence, start, end):
+    """Bind a v2 citation to one verified case-local source.add event.
+
+    This is not immutable physical-source identity or custody assurance.
+    """
+    from .source_registration import inspect_source_registration
+
+    base = make_byte_range_anchor(evidence, start, end)
+    inspected = inspect_catalog_byte_range(case, base)
+    if not inspected["ok"]:
+        raise ValueError("Cannot bind source registration: " + inspected["reason"])
+    with case.connect() as db:
+        registration = inspect_source_registration(db, base["source_id"])
+    if not registration["ok"]:
+        raise ValueError("Cannot bind source registration: " + registration["reason"])
+    bound = {**base, "version": 2, "registration_id": registration["registration_id"]}
+    inspected = inspect_catalog_byte_range(case, bound)
+    if not inspected["ok"]:
+        raise ValueError("Cannot bind source registration: " + inspected["reason"])
+    return bound
+
+
 def inspect_catalog_byte_range(case, anchor):
     """Resolve a byte-range anchor against one *current catalog snapshot*.
 
@@ -93,6 +124,13 @@ def inspect_catalog_byte_range(case, anchor):
         ).fetchone()
         if latest is None or latest["status"] != "complete":
             return {"ok": False, "reason": "inventory_incomplete"}
+        if validated["version"] == 2:
+            from .source_registration import inspect_source_registration
+            registration = inspect_source_registration(db, anchor["source_id"])
+            if not registration["ok"]:
+                return {"ok": False, "reason": registration["reason"]}
+            if registration["registration_id"] != anchor["registration_id"]:
+                return {"ok": False, "reason": "registration_changed"}
         return {
             "ok": True,
             "status": "catalog_consistent",
