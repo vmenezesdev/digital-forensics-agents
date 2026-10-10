@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dfa:byte-range-anchor:v1",
+  "title": "DFA case-local byte range anchor v1",
+  "description": "A catalog-bound citation, not proof of acquisition, custody, or current source-byte integrity. Cross-field end > start and catalog identity are checked by dfa.anchors.validate_byte_range_anchor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "type", "source_id", "evidence_id", "sha256", "start", "end"],
+  "properties": {
+    "version": {"const": 1},
+    "type": {"const": "byte_range"},
+    "source_id": {"type": "string", "minLength": 1},
+    "evidence_id": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "start": {"type": "integer", "minimum": 0},
+    "end": {"type": "integer", "minimum": 1}
+  }
+}

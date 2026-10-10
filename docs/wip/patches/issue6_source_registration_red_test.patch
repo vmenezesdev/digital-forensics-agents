@@ -1,0 +1,55 @@
+diff --git a/tests/test_byte_anchors.py b/tests/test_byte_anchors.py
+index c67a12a..3a3ed02 100644
+--- a/tests/test_byte_anchors.py
++++ b/tests/test_byte_anchors.py
+@@ -351,5 +351,50 @@ class ByteRangeAnchorTests(unittest.TestCase):
+             self.assertEqual(result, {"ok": False, "reason": "catalog_changed"})
+ 
+ 
++
++    def test_source_registration_replacement_invalidates_prior_anchor(self):
++        """RED: same bytes in a different registered root must not inherit source identity.
++
++        This exposes missing immutable source registration/generation identity in
++        the v1 candidate. Do not merge until the source version is modeled.
++        """
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            first, replacement = root / "source-a", root / "source-b"
++            first.mkdir()
++            replacement.mkdir()
++            payload = b"synthetic anchor bytes"
++            (first / "note.txt").write_bytes(payload)
++            (replacement / "note.txt").write_bytes(payload)
++            db_path = root / "catalog.sqlite3"
++            with sqlite3.connect(db_path) as db:
++                db.executescript(
++                    "CREATE TABLE sources(id TEXT PRIMARY KEY, root TEXT NOT NULL);"
++                    "CREATE TABLE evidence(id INTEGER PRIMARY KEY, source_id TEXT, relpath TEXT,"
++                    " sha256 TEXT, size INTEGER, status TEXT);"
++                    "CREATE TABLE inventory_runs(id INTEGER PRIMARY KEY, source_id TEXT, status TEXT);"
++                )
++                db.execute("INSERT INTO sources VALUES (?,?)", ("synthetic", str(first)))
++                db.execute("INSERT INTO evidence VALUES (7,?,?,?,?,?)", (
++                    "synthetic", "note.txt", hashlib.sha256(payload).hexdigest(),
++                    len(payload), "indexed"
++                ))
++                db.execute("INSERT INTO inventory_runs VALUES (1,'synthetic','complete')")
++
++            class SyntheticCase:
++                def connect(self):
++                    db = sqlite3.connect(db_path)
++                    db.row_factory = sqlite3.Row
++                    return db
++
++            case = SyntheticCase()
++            self.assertTrue(inspect_catalog_byte_range(case, self.anchor)["ok"])
++            # No new inventory was performed for the replacement registration.
++            with sqlite3.connect(db_path) as db:
++                db.execute("UPDATE sources SET root=? WHERE id='synthetic'", (str(replacement),))
++            result = inspect_catalog_byte_range(case, self.anchor)
++            self.assertFalse(result["ok"], "stale anchor resolved after source registration replacement")
++
++
+ if __name__ == "__main__":
+     unittest.main()
