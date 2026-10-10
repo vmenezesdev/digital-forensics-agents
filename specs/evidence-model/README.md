@@ -95,3 +95,14 @@ The source may change immediately after the check; even two no-follow opens
 cannot make an externally mutable source into an immutable snapshot. Callers
 must not treat the returned bytes as a reviewed finding or execute them as
 instructions. The API is intentionally not a general-purpose file reader.
+
+### Machine-checkable v2 registration-bound byte-range contract
+
+The [v2 JSON Schema](byte-range-anchor-v2.schema.json) and
+[synthetic examples](byte-range-anchor-v2.examples.json) add a 64-character
+lowercase SHA-256 `registration_id` to the v1 byte-range fields. The example
+event hash is a **placeholder**, not a verified source registration. JSON Schema
+alone cannot enforce `end > start`, match the catalog and live audit event,
+or authenticate source bytes. Runtime validation and source verification remain
+required. V1 remains supported; other anchor types and immutable physical-source
+generation remain outside this increment (issue #6).

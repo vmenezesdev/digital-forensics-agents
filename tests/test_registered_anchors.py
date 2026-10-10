@@ -80,6 +80,27 @@ class RegisteredAnchorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_byte_range_anchor({**old, "registration_id": "a" * 64}, self.row)
 
+    def test_v2_normative_schema_and_synthetic_examples(self):
+        import hashlib
+        import json
+        spec = Path(__file__).resolve().parents[1] / "specs" / "evidence-model"
+        schema = json.loads((spec / "byte-range-anchor-v2.schema.json").read_text())
+        fixture = json.loads((spec / "byte-range-anchor-v2.examples.json").read_text())
+        self.assertEqual(schema["properties"]["version"]["const"], 2)
+        self.assertEqual(schema["properties"]["registration_id"]["pattern"], "^[0-9a-f]{64}$")
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(set(schema["required"]), set(fixture["valid_anchor"]))
+        self.assertEqual(
+            hashlib.sha256(fixture["payload_utf8"].encode("utf-8")).hexdigest(),
+            fixture["catalog_record"]["sha256"],
+        )
+        self.assertEqual(validate_byte_range_anchor(
+            fixture["valid_anchor"], fixture["catalog_record"]
+        ), fixture["valid_anchor"])
+        for invalid in fixture["invalid_anchors"]:
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                validate_byte_range_anchor(invalid, fixture["catalog_record"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dfa:byte-range-anchor:v2",
+  "title": "DFA case-local registration-bound byte range anchor v2",
+  "description": "Catalog and mutable local source.add event binding only. Does not prove physical source generation, acquisition or custody. Runtime checks catalog identity, event consistency and end > start.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "source_id",
+    "evidence_id",
+    "sha256",
+    "start",
+    "end",
+    "registration_id"
+  ],
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "type": {
+      "const": "byte_range"
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854776000
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "registration_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

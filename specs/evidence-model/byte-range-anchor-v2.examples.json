@@ -1,0 +1,114 @@
+{
+  "description": "Synthetic schema/runtime fixture. registration_id is a placeholder event hash; no live registration, physical source identity or custody claim.",
+  "payload_utf8": "synthetic anchor bytes",
+  "catalog_record": {
+    "id": 7,
+    "source_id": "synthetic",
+    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+    "size": 22,
+    "status": "indexed"
+  },
+  "valid_anchor": {
+    "version": 2,
+    "type": "byte_range",
+    "source_id": "synthetic",
+    "evidence_id": 7,
+    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+    "start": 0,
+    "end": 9,
+    "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "invalid_anchors": [
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "invalid"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "version": 1,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "start": 0,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": -1,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": true,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "unexpected": "field"
+    },
+    {
+      "version": 2,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 0,
+      "registration_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}
