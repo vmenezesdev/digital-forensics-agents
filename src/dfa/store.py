@@ -240,13 +240,37 @@ class Case:
                 counts = {"indexed": 0, "excluded": 0, "drift": 0, "errors": 0, "missing": 0}
                 def walk_error(error):
                     raise error
+                expected_dirs = {}
+                visited_dirs = set()
                 for folder, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+                    folder_path = Path(folder)
+                    if folder_path != root:
+                        expected = expected_dirs.get(folder_path)
+                        try:
+                            current = folder_path.stat(follow_symlinks=False)
+                        except OSError:
+                            counts["errors"] += 1
+                        else:
+                            if (expected is None or not stat.S_ISDIR(current.st_mode)
+                                    or (current.st_dev, current.st_ino) != expected):
+                                counts["errors"] += 1
+                        visited_dirs.add(folder_path)
                     symlink_dirs = set()
                     for directory in list(dirs):
                         if (Path(folder)/directory).is_symlink():
                             dirs.remove(directory)
                             files.append(directory)
                             symlink_dirs.add(directory)
+                    for directory in dirs:
+                        child = Path(folder) / directory
+                        try:
+                            child_stat = child.stat(follow_symlinks=False)
+                            if not stat.S_ISDIR(child_stat.st_mode):
+                                counts["errors"] += 1
+                            else:
+                                expected_dirs[child] = (child_stat.st_dev, child_stat.st_ino)
+                        except OSError:
+                            counts["errors"] += 1
                     for filename in files:
                         path = Path(folder)/filename
                         rel = path.relative_to(root).as_posix()
@@ -311,6 +335,8 @@ class Case:
                                 "INSERT INTO search_index(evidence_id,body) VALUES(?,?)",
                                 (str(evidence_id), body)
                             )
+                # os.walk may silently skip a discovered directory after a swap.
+                counts["errors"] += len(expected_dirs.keys() - visited_dirs)
                 ending_root = root.stat(follow_symlinks=False)
                 if ((ending_root.st_dev, ending_root.st_ino) != root_identity
                         or not stat.S_ISDIR(ending_root.st_mode)):
