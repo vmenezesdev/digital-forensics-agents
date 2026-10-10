@@ -1,0 +1,66 @@
+--- a/tests/test_receipt_snapshot_contract.py
++++ b/tests/test_receipt_snapshot_contract.py
+@@ -0,0 +1,63 @@
++"""Synthetic regression tests for immutable query receipt snapshots (issue #9).
++
++These tests cover only existing receipt persistence guarantees. They do NOT
++establish index-generation identity, which remains unimplemented in trunk.
++"""
++import json
++import sqlite3
++import tempfile
++import unittest
++from pathlib import Path
++from unittest import mock
++
++from dfa.store import Case
++
++
++class ReceiptSnapshotContractTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.root = Path(self.tmp.name)
++        self.source = self.root / "synthetic-source"
++        self.source.mkdir()
++        self.case = Case(self.root / "case")
++        self.case.init()
++        self.case.source_add("sample", self.source)
++
++    def _persisted(self, receipt_id):
++        with sqlite3.connect(self.case.db) as db:
++            return db.execute(
++                "SELECT query,created,report FROM receipts WHERE id=?", (receipt_id,)
++            ).fetchone()
++
++    def test_rebuild_and_second_session_cannot_rewrite_old_receipt(self):
++        (self.source / "note.txt").write_text("synthetic alpha", encoding="utf-8")
++        self.case.ingest("sample")
++        original = self.case.search("alpha")
++        before = self._persisted(original["receipt_id"])
++        self.assertIsNotNone(before)
++        self.assertEqual(json.loads(before[2])["results"], original["results"])
++
++        reopened = Case(self.case.root)
++        rebuilt = reopened.index_rebuild()
++        self.assertEqual(rebuilt["rebuilt"], 1)
++        later = reopened.search("alpha")
++        self.assertNotEqual(original["receipt_id"], later["receipt_id"])
++        self.assertEqual(self._persisted(original["receipt_id"]), before)
++
++    def test_partial_inventory_changes_new_receipt_not_historical_snapshot(self):
++        (self.source / "note.txt").write_text("synthetic beta", encoding="utf-8")
++        self.case.ingest("sample")
++        old = self.case.search("beta")
++        before = self._persisted(old["receipt_id"])
++        self.assertEqual(len(old["results"]), 1)
++
++        with mock.patch("dfa.store._inspect_file", side_effect=OSError("synthetic failure")):
++            partial = self.case.ingest("sample")
++        self.assertEqual(partial["scan_status"], "partial")
++        new = self.case.search("beta")
++        self.assertEqual(new["results"], [])
++        self.assertFalse(new["complete"])
++        self.assertEqual(new["inventory"]["sample"]["status"], "partial")
++        self.assertNotEqual(new["receipt_id"], old["receipt_id"])
++        self.assertEqual(self._persisted(old["receipt_id"]), before)

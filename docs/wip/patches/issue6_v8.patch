@@ -1,0 +1,740 @@
+diff --git a/specs/evidence-model/README.md b/specs/evidence-model/README.md
+index ac146d6..cec8d43 100644
+--- a/specs/evidence-model/README.md
++++ b/specs/evidence-model/README.md
+@@ -22,3 +22,76 @@ Evidence anchors must be typed: byte range, document page and region, audio inte
+ **First implementation profile:** local filesystem for externally held originals, SQLite for metadata and FTS5 for bounded text search. Indexes are derived, disposable projections, not authoritative evidence. SQLite on a network share is not an acceptable distributed message board. Future distributed profile may use PostgreSQL and object storage.
+ 
+ Modeling references: [W3C PROV](https://www.w3.org/TR/prov-o/) and [CASE/UCO](https://caseontology.org/). No conformance is claimed yet.
++
++## First executable typed anchor — issue #6 (incremental)
++
++`dfa.anchors.make_byte_range_anchor(row, start, end)` constructs a **version 1**
++`byte_range` anchor from an existing catalog row; `validate_byte_range_anchor(anchor, row)`
++checks it against that row without touching source files. The normative fields are
++`version`, `type`, `source_id`, `evidence_id`, `sha256`, `start`, `end`. The span is
++zero-based, half-open (`start` inclusive, `end` exclusive), nonempty, and must fit
++within the cataloged byte length. Unknown fields, incorrect hashes/IDs, negative or
++boolean offsets, out-of-range SQLite evidence IDs (outside 1..2^63-1),
++unsupported versions/types, and missing/drift/error records fail closed.
++
++The anchor is **scoped to one case database**. It is independent of the file path
++and disposable search index, but SQLite integer evidence IDs are not portable
++across independently created case databases. The constructor and catalog validator check only a *catalog assertion*.
++A separate bounded source-byte resolver is described below; neither API
++authenticates acquisition or custody, nor makes an externally mutable source
++immutable. Globally stable IDs and additional anchor types remain open work
++under issue #6.
++
++Example with synthetic data (the digest must be the cataloged SHA-256):
++
++```python
++from dfa.anchors import make_byte_range_anchor
++anchor = make_byte_range_anchor(catalog_row, start=0, end=9)
++# {'version': 1, 'type': 'byte_range', 'source_id': ..., 'evidence_id': ...,
++#  'sha256': ..., 'start': 0, 'end': 9}
++```
++
++
++### Machine-checkable byte-range contract
++
++The normative v1 JSON shape is in [`byte-range-anchor.schema.json`](byte-range-anchor.schema.json),
++with synthetic positive and negative fixtures in
++[`byte-range-anchor.examples.json`](byte-range-anchor.examples.json).
++JSON Schema checks individual field types, formats and allowed keys; it cannot
++express the standard cross-field requirement `end > start` in this dialect, nor
++can it verify source identity, catalog status or SHA-256 equality. Those
++requirements are enforced by `dfa.anchors.validate_byte_range_anchor(anchor, row)`.
++A JSON Schema validation alone is **not** successful citation resolution.
++Other anchor types (PDF region, UTF-8 span, audio/video timespan, structured
++record) remain design-only and must not be accepted as byte-range anchors.
++
++### Current catalog lookup (not original-byte verification)
++
++`dfa.anchors.inspect_catalog_byte_range(case, anchor)` returns a
++`catalog_consistent` reference with the catalog's *unverified* relative path
++only when the referenced evidence row matches the anchor and the source's
++latest inventory run is `complete`. Otherwise it returns a machine-readable
++reason: `invalid_anchor`, `unknown_evidence`, `unknown_source`,
++`anchor_catalog_mismatch`, or `inventory_incomplete`. An orphaned evidence row
++without a registered source cannot resolve even if a past inventory was complete. This check avoids treating retained rows after partial
++scans as current. A positive result is **not** a verified citation to original
++bytes: file existence, live digest, path containment and custody are not
++verified by this lookup. Use a separate secure source-byte resolver before
++asserting that a citation was reproduced from source material.
++
++### Bounded source-byte resolution (local, issue #6)
++
++`dfa.anchors.read_verified_byte_range(case, anchor, max_bytes=1048576)`
++returns at most 1 MiB of original bytes (`data`, a Python `bytes` value),
++**only after** streaming and comparing the *entire* current file SHA-256 to
++the catalog baseline. The resolver uses descriptor-relative no-follow opens
++and rechecks the file inode, root identity, registered source-root mapping and catalog state; it refuses
++symlink/path escapes, missing sources, drift, invalid spans and incomplete
++latest inventories. Result reasons include `range_too_large`,
++`source_unavailable`, `source_changed` and `catalog_changed`.
++
++This verification does **not** authenticate an acquisition or custodian.
++The source may change immediately after the check; even two no-follow opens
++cannot make an externally mutable source into an immutable snapshot. Callers
++must not treat the returned bytes as a reviewed finding or execute them as
++instructions. The API is intentionally not a general-purpose file reader.
+diff --git a/specs/evidence-model/byte-range-anchor.examples.json b/specs/evidence-model/byte-range-anchor.examples.json
+new file mode 100644
+index 0000000..8da24f4
+--- /dev/null
++++ b/specs/evidence-model/byte-range-anchor.examples.json
+@@ -0,0 +1,50 @@
++{
++  "description": "Synthetic normative anchor shape; the digest identifies the synthetic payload below, and the ID is local to its case.",
++  "payload_utf8": "synthetic anchor bytes",
++  "catalog_record": {
++    "id": 7,
++    "source_id": "synthetic",
++    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
++    "size": 22,
++    "status": "indexed"
++  },
++  "valid_anchor": {
++    "version": 1,
++    "type": "byte_range",
++    "source_id": "synthetic",
++    "evidence_id": 7,
++    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
++    "start": 0,
++    "end": 9
++  },
++  "invalid_anchors": [
++    {
++      "version": 1,
++      "type": "byte_range",
++      "source_id": "synthetic",
++      "evidence_id": 7,
++      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
++      "start": 9,
++      "end": 9
++    },
++    {
++      "version": 1,
++      "type": "byte_range",
++      "source_id": "synthetic",
++      "evidence_id": 7,
++      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
++      "start": 0,
++      "end": 23
++    },
++    {
++      "version": 1,
++      "type": "byte_range",
++      "source_id": "synthetic",
++      "evidence_id": 7,
++      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
++      "start": 0,
++      "end": 9,
++      "relpath": "untrusted.txt"
++    }
++  ]
++}
+diff --git a/specs/evidence-model/byte-range-anchor.schema.json b/specs/evidence-model/byte-range-anchor.schema.json
+new file mode 100644
+index 0000000..58b4e17
+--- /dev/null
++++ b/specs/evidence-model/byte-range-anchor.schema.json
+@@ -0,0 +1,18 @@
++{
++  "$schema": "https://json-schema.org/draft/2020-12/schema",
++  "$id": "urn:dfa:byte-range-anchor:v1",
++  "title": "DFA case-local byte range anchor v1",
++  "description": "A catalog-bound citation, not proof of acquisition, custody, or current source-byte integrity. Cross-field end > start and catalog identity are checked by dfa.anchors.validate_byte_range_anchor.",
++  "type": "object",
++  "additionalProperties": false,
++  "required": ["version", "type", "source_id", "evidence_id", "sha256", "start", "end"],
++  "properties": {
++    "version": {"const": 1},
++    "type": {"const": "byte_range"},
++    "source_id": {"type": "string", "minLength": 1},
++    "evidence_id": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
++    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
++    "start": {"type": "integer", "minimum": 0},
++    "end": {"type": "integer", "minimum": 1}
++  }
++}
+diff --git a/src/dfa/anchors.py b/src/dfa/anchors.py
+new file mode 100644
+index 0000000..25090b6
+--- /dev/null
++++ b/src/dfa/anchors.py
+@@ -0,0 +1,212 @@
++"""Versioned byte-range anchors and bounded source checks (not custody assurance)."""
++import re
++
++_FIELDS = frozenset({"version", "type", "source_id", "evidence_id", "sha256", "start", "end"})
++_SQLITE_MAX_ROWID = (1 << 63) - 1
++
++
++def validate_byte_range_anchor(anchor, evidence):
++    """Check a half-open byte span against one catalog record, without reading files.
++
++    An accepted anchor is *catalog-consistent*, not proof that external source
++    bytes still exist or match the digest. IDs are local to a single case DB.
++    """
++    if not isinstance(anchor, dict) or set(anchor) != _FIELDS:
++        raise ValueError("Invalid byte-range anchor fields")
++    if type(anchor["version"]) is not int or anchor["version"] != 1:
++        raise ValueError("Unsupported anchor version")
++    if anchor["type"] != "byte_range":
++        raise ValueError("Unsupported anchor type")
++    if not isinstance(anchor["source_id"], str) or not anchor["source_id"]:
++        raise ValueError("Invalid source identifier")
++    if (type(anchor["evidence_id"]) is not int
++            or not 1 <= anchor["evidence_id"] <= _SQLITE_MAX_ROWID):
++        raise ValueError("Invalid evidence identifier")
++    if not isinstance(anchor["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", anchor["sha256"]) is None:
++        raise ValueError("Invalid SHA-256 digest")
++    if (type(anchor["start"]) is not int or type(anchor["end"]) is not int
++            or anchor["start"] < 0 or anchor["end"] <= anchor["start"]):
++        raise ValueError("Invalid half-open byte range")
++    try:
++        evidence_id = evidence["id"]
++        source_id = evidence["source_id"]
++        digest = evidence["sha256"]
++        size = evidence["size"]
++        status = evidence["status"]
++    except (KeyError, IndexError, TypeError) as error:
++        raise ValueError("Incomplete catalog record") from error
++    if (type(evidence_id) is not int or evidence_id != anchor["evidence_id"]
++            or source_id != anchor["source_id"] or digest != anchor["sha256"]):
++        raise ValueError("Anchor does not identify this catalog record/version")
++    if type(size) is not int or anchor["end"] > size:
++        raise ValueError("Byte range exceeds recorded content size")
++    if status not in ("indexed", "excluded"):
++        raise ValueError("Catalog record is not in a referenceable state")
++    return dict(anchor)
++
++
++def make_byte_range_anchor(evidence, start, end):
++    """Construct a validated anchor from a catalog row; no source bytes read."""
++    anchor = {
++        "version": 1, "type": "byte_range", "source_id": evidence["source_id"],
++        "evidence_id": evidence["id"], "sha256": evidence["sha256"],
++        "start": start, "end": end,
++    }
++    return validate_byte_range_anchor(anchor, evidence)
++
++
++def inspect_catalog_byte_range(case, anchor):
++    """Resolve a byte-range anchor against one *current catalog snapshot*.
++
++    Returns a typed, deterministic failure reason or a catalog-consistent
++    reference. It never reads original bytes or authenticates source custody.
++    An incomplete latest inventory prevents treating an old row as current.
++    """
++    if (not isinstance(anchor, dict)
++            or type(anchor.get("evidence_id")) is not int
++            or not 1 <= anchor["evidence_id"] <= _SQLITE_MAX_ROWID
++            or not isinstance(anchor.get("source_id"), str)
++            or not anchor["source_id"]):
++        return {"ok": False, "reason": "invalid_anchor"}
++    with case.connect() as db:
++        row = db.execute(
++            "SELECT id,source_id,relpath,sha256,size,status FROM evidence "
++            "WHERE id=? AND source_id=?",
++            (anchor["evidence_id"], anchor["source_id"]),
++        ).fetchone()
++        if row is None:
++            return {"ok": False, "reason": "unknown_evidence"}
++        # Evidence rows do not have an enforced foreign key to sources in the
++        # current workspace schema. An orphan must not resolve successfully.
++        source = db.execute(
++            "SELECT 1 FROM sources WHERE id=?", (anchor["source_id"],)
++        ).fetchone()
++        if source is None:
++            return {"ok": False, "reason": "unknown_source"}
++        try:
++            validated = validate_byte_range_anchor(anchor, row)
++        except ValueError:
++            return {"ok": False, "reason": "anchor_catalog_mismatch"}
++        latest = db.execute(
++            "SELECT status FROM inventory_runs WHERE source_id=? "
++            "ORDER BY id DESC LIMIT 1", (anchor["source_id"],)
++        ).fetchone()
++        if latest is None or latest["status"] != "complete":
++            return {"ok": False, "reason": "inventory_incomplete"}
++        return {
++            "ok": True,
++            "status": "catalog_consistent",
++            "anchor": validated,
++            "catalog_relpath": row["relpath"],
++        }
++
++def read_verified_byte_range(case, anchor, *, max_bytes=1048576):
++    """Read a bounded original-byte span after checking its *whole-file* digest.
++
++    Only works on platforms supporting descriptor-relative no-follow opens.
++    This is point-in-time source verification against a case-local catalog
++    digest, not acquisition, custody authentication, or an immutable snapshot.
++    """
++    import hashlib
++    import os
++    import stat
++    from pathlib import Path
++    from .store import _open_confined_file
++
++    if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
++        raise ValueError("max_bytes must be between 1 and 1048576")
++    inspected = inspect_catalog_byte_range(case, anchor)
++    if not inspected["ok"]:
++        return inspected
++    if anchor["end"] - anchor["start"] > max_bytes:
++        return {"ok": False, "reason": "range_too_large"}
++
++    with case.connect() as db:
++        row = db.execute(
++            "SELECT e.id,e.source_id,e.relpath,e.sha256,e.size,e.status,s.root "
++            "FROM evidence e JOIN sources s ON s.id=e.source_id "
++            "WHERE e.id=? AND e.source_id=?",
++            (anchor["evidence_id"], anchor["source_id"]),
++        ).fetchone()
++        if row is None or row["relpath"] != inspected["catalog_relpath"]:
++            return {"ok": False, "reason": "catalog_changed"}
++        try:
++            validate_byte_range_anchor(anchor, row)
++        except ValueError:
++            return {"ok": False, "reason": "catalog_changed"}
++        if (not isinstance(row["root"], str) or not row["root"]
++                or not isinstance(row["relpath"], str) or not row["relpath"]):
++            return {"ok": False, "reason": "catalog_changed"}
++        source_root = Path(row["root"])
++        relpath = row["relpath"]
++        expected_size = row["size"]
++        expected_digest = row["sha256"]
++
++    try:
++        root_stat = source_root.stat(follow_symlinks=False)
++        if not stat.S_ISDIR(root_stat.st_mode):
++            raise OSError("Source root is not a directory")
++        root_identity = (root_stat.st_dev, root_stat.st_ino)
++        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
++        path = source_root / relpath
++        fd = _open_confined_file(path, source_root, flags, root_identity=root_identity)
++        try:
++            before = os.fstat(fd)
++            if not stat.S_ISREG(before.st_mode):
++                raise OSError("Not a regular file")
++            digest = hashlib.sha256()
++            selected = bytearray()
++            position = 0
++            while True:
++                chunk = os.read(fd, 1024 * 1024)
++                if not chunk:
++                    break
++                digest.update(chunk)
++                low = max(anchor["start"], position)
++                high = min(anchor["end"], position + len(chunk))
++                if low < high:
++                    selected.extend(chunk[low - position:high - position])
++                position += len(chunk)
++            after = os.fstat(fd)
++        finally:
++            os.close(fd)
++        # Confirm the same inode is still reachable through the confined path.
++        check_fd = _open_confined_file(path, source_root, flags, root_identity=root_identity)
++        try:
++            current = os.fstat(check_fd)
++        finally:
++            os.close(check_fd)
++        ending_root = source_root.stat(follow_symlinks=False)
++        if not stat.S_ISDIR(ending_root.st_mode) or (
++            ending_root.st_dev, ending_root.st_ino
++        ) != root_identity:
++            return {"ok": False, "reason": "source_changed"}
++    except (OSError, ValueError):
++        return {"ok": False, "reason": "source_unavailable"}
++
++    fingerprint = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
++    if (fingerprint(before) != fingerprint(after)
++            or fingerprint(current) != fingerprint(after)
++            or position != expected_size or digest.hexdigest() != expected_digest
++            or len(selected) != anchor["end"] - anchor["start"]):
++        return {"ok": False, "reason": "source_changed"}
++
++    rechecked = inspect_catalog_byte_range(case, anchor)
++    if not rechecked["ok"]:
++        return rechecked
++    if rechecked["catalog_relpath"] != relpath:
++        return {"ok": False, "reason": "catalog_changed"}
++    # The source-to-root mapping is mutable catalog state too. Re-check it
++    # after the byte read: a remap to another root must not be silently
++    # represented as a verified citation to the *current* registered source.
++    with case.connect() as db:
++        current_source = db.execute(
++            "SELECT root FROM sources WHERE id=?", (anchor["source_id"],)
++        ).fetchone()
++    if current_source is None or current_source["root"] != str(source_root):
++        return {"ok": False, "reason": "catalog_changed"}
++    return {
++        "ok": True, "status": "bytes_verified_against_catalog_digest",
++        "anchor": dict(anchor), "data": bytes(selected),
++        "limitation": "Point-in-time digest check; not forensic acquisition or custody verification",
++    }
+diff --git a/tests/test_byte_anchors.py b/tests/test_byte_anchors.py
+new file mode 100644
+index 0000000..c67a12a
+--- /dev/null
++++ b/tests/test_byte_anchors.py
+@@ -0,0 +1,355 @@
++"""Synthetic conformance tests for the first catalog-bound typed anchor."""
++import hashlib
++import json
++import sqlite3
++import tempfile
++import unittest
++from pathlib import Path
++
++from dfa.store import Case
++
++from dfa.anchors import make_byte_range_anchor, validate_byte_range_anchor, inspect_catalog_byte_range
++
++
++class ByteRangeAnchorTests(unittest.TestCase):
++    def setUp(self):
++        self.record = {
++            "id": 7, "source_id": "synthetic", "sha256": hashlib.sha256(b"synthetic anchor bytes").hexdigest(),
++            "size": len(b"synthetic anchor bytes"), "status": "indexed", "relpath": "note.txt",
++        }
++        self.anchor = make_byte_range_anchor(self.record, 0, 9)
++
++    def test_valid_half_open_span_and_no_path_dependency(self):
++        self.assertEqual(self.anchor["type"], "byte_range")
++        self.assertEqual(self.anchor["start"], 0)
++        self.assertEqual(self.anchor["end"], 9)
++        self.assertNotIn("relpath", self.anchor)
++        renamed = dict(self.record, relpath="renamed.txt")
++        self.assertEqual(validate_byte_range_anchor(self.anchor, renamed), self.anchor)
++
++    def test_wrong_source_id_digest_or_evidence_id_rejected(self):
++        for field, value in (("source_id", "other"), ("sha256", "0" * 64), ("evidence_id", 8)):
++            with self.subTest(field=field), self.assertRaises(ValueError):
++                validate_byte_range_anchor(dict(self.anchor, **{field: value}), self.record)
++
++    def test_sqlite_identifier_bounds_rejected_by_constructor_and_validator(self):
++        for value in (0, -1, 1 << 63, 1 << 100, True):
++            with self.subTest(value=value), self.assertRaises(ValueError):
++                validate_byte_range_anchor(dict(self.anchor, evidence_id=value), self.record)
++        with self.assertRaises(ValueError):
++            make_byte_range_anchor(dict(self.record, id=1 << 100), 0, 1)
++
++    def test_bad_ranges_and_bool_offsets_rejected(self):
++        for start, end in ((-1, 2), (2, 2), (3, 2), (0, self.record["size"] + 1), (False, 2), (0, True)):
++            with self.subTest(start=start, end=end), self.assertRaises(ValueError):
++                make_byte_range_anchor(self.record, start, end)
++
++    def test_unsupported_versions_types_and_extra_fields_rejected(self):
++        for change in ({"version": 2}, {"type": "text_span"}, {"extra": "untrusted"}, {"sha256": "not-a-digest"}):
++            with self.subTest(change=change), self.assertRaises(ValueError):
++                validate_byte_range_anchor(dict(self.anchor, **change), self.record)
++
++    def test_unreferenceable_or_unhashed_records_rejected(self):
++        for status in ("missing", "drift", "error"):
++            with self.subTest(status=status), self.assertRaises(ValueError):
++                make_byte_range_anchor(dict(self.record, status=status), 0, 1)
++        with self.assertRaises(ValueError):
++            make_byte_range_anchor(dict(self.record, sha256=None), 0, 1)
++
++    def test_catalog_identity_survives_reopen_and_disposable_index_change(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            db_path = Path(tmp) / "synthetic.sqlite3"
++            with sqlite3.connect(db_path) as db:
++                db.execute("CREATE TABLE evidence(id INTEGER PRIMARY KEY,source_id TEXT,sha256 TEXT,size INTEGER,status TEXT,relpath TEXT)")
++                db.execute("CREATE TABLE disposable_index(evidence_id INTEGER,body TEXT)")
++                db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?)", tuple(self.record[k] for k in ("id", "source_id", "sha256", "size", "status", "relpath")))
++                db.execute("INSERT INTO disposable_index VALUES (7,'synthetic')")
++            with sqlite3.connect(db_path) as db:
++                db.row_factory = sqlite3.Row
++                db.execute("DELETE FROM disposable_index")
++                db.execute("INSERT INTO disposable_index VALUES (7,'rebuilt')")
++                db.execute("UPDATE evidence SET relpath='renamed.txt' WHERE id=7")
++                row = db.execute("SELECT * FROM evidence WHERE id=7").fetchone()
++                self.assertEqual(validate_byte_range_anchor(self.anchor, row), self.anchor)
++
++
++    def test_normative_json_fixture_matches_runtime_contract(self):
++        fixture = json.loads((Path(__file__).resolve().parents[1] /
++                              "specs/evidence-model/byte-range-anchor.examples.json").read_text())
++        record = fixture["catalog_record"]
++        self.assertEqual(record["sha256"], hashlib.sha256(fixture["payload_utf8"].encode()).hexdigest())
++        anchor = fixture["valid_anchor"]
++        self.assertEqual(make_byte_range_anchor(record, anchor["start"], anchor["end"]), anchor)
++        for invalid in fixture["invalid_anchors"]:
++            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
++                validate_byte_range_anchor(invalid, record)
++        schema = json.loads((Path(__file__).resolve().parents[1] /
++                             "specs/evidence-model/byte-range-anchor.schema.json").read_text())
++        self.assertEqual(set(schema["required"]), set(anchor))
++        self.assertFalse(schema["additionalProperties"])
++        self.assertEqual(schema["properties"]["version"]["const"], 1)
++        self.assertEqual(schema["properties"]["type"]["const"], "byte_range")
++
++    def test_real_case_anchor_survives_second_session_and_index_rebuild(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / "synthetic-source"
++            source.mkdir()
++            (source / "note.txt").write_text("synthetic stable anchor text", encoding="utf-8")
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", source)
++            self.assertEqual(case.ingest("sample")["scan_status"], "complete")
++            with case.connect() as db:
++                record = db.execute(
++                    "SELECT id,source_id,sha256,size,status FROM evidence "
++                    "WHERE source_id=? AND relpath=?", ("sample", "note.txt")
++                ).fetchone()
++                anchor = make_byte_range_anchor(record, 0, 9)
++
++            reopened = Case(case.root)
++            self.assertEqual(reopened.index_rebuild()["rebuilt"], 1)
++            with reopened.connect() as db:
++                after = db.execute(
++                    "SELECT id,source_id,sha256,size,status FROM evidence "
++                    "WHERE source_id=? AND relpath=?", ("sample", "note.txt")
++                ).fetchone()
++                self.assertEqual(validate_byte_range_anchor(anchor, after), anchor)
++
++    def test_real_case_anchor_fails_closed_after_recorded_drift(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / "synthetic-source"
++            source.mkdir()
++            target = source / "note.txt"
++            target.write_text("synthetic original marker", encoding="utf-8")
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", source)
++            case.ingest("sample")
++            with case.connect() as db:
++                record = db.execute(
++                    "SELECT id,source_id,sha256,size,status FROM evidence "
++                    "WHERE source_id=? AND relpath=?", ("sample", "note.txt")
++                ).fetchone()
++                anchor = make_byte_range_anchor(record, 0, 9)
++
++            target.write_text("synthetic modified marker", encoding="utf-8")
++            self.assertEqual(case.ingest("sample")["drift"], 1)
++            with Case(case.root).connect() as db:
++                drifted = db.execute(
++                    "SELECT id,source_id,sha256,size,status FROM evidence "
++                    "WHERE source_id=? AND relpath=?", ("sample", "note.txt")
++                ).fetchone()
++                self.assertEqual(drifted["status"], "drift")
++                with self.assertRaises(ValueError):
++                    validate_byte_range_anchor(anchor, drifted)
++
++
++    def test_catalog_resolution_fails_closed_for_incomplete_latest_inventory(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            db_path = Path(tmp) / "catalog.sqlite3"
++            with sqlite3.connect(db_path) as db:
++                db.execute("CREATE TABLE evidence(id INTEGER PRIMARY KEY,source_id TEXT,sha256 TEXT,size INTEGER,status TEXT,relpath TEXT)")
++                db.execute("CREATE TABLE inventory_runs(id INTEGER PRIMARY KEY,source_id TEXT,status TEXT)")
++                db.execute("CREATE TABLE sources(id TEXT PRIMARY KEY,root TEXT NOT NULL)")
++                db.execute("INSERT INTO sources VALUES ('synthetic','/synthetic/source')")
++                db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?)", tuple(self.record[k] for k in ("id", "source_id", "sha256", "size", "status", "relpath")))
++                db.execute("INSERT INTO inventory_runs VALUES (1,'synthetic','complete')")
++
++            class SyntheticCase:
++                def connect(self):
++                    connection = sqlite3.connect(db_path)
++                    connection.row_factory = sqlite3.Row
++                    return connection
++
++            case = SyntheticCase()
++            valid = inspect_catalog_byte_range(case, self.anchor)
++            self.assertTrue(valid["ok"])
++            self.assertEqual(valid["status"], "catalog_consistent")
++            self.assertEqual(valid["catalog_relpath"], "note.txt")
++            with sqlite3.connect(db_path) as db:
++                db.execute("INSERT INTO inventory_runs VALUES (2,'synthetic','partial')")
++            self.assertEqual(inspect_catalog_byte_range(case, self.anchor),
++                             {"ok": False, "reason": "inventory_incomplete"})
++            with sqlite3.connect(db_path) as db:
++                db.execute("INSERT INTO inventory_runs VALUES (3,'synthetic','complete')")
++            self.assertTrue(inspect_catalog_byte_range(case, self.anchor)["ok"])
++
++    def test_catalog_resolution_rejects_orphaned_source(self):
++        """A retained evidence row is not a resolvable source after deletion."""
++        with tempfile.TemporaryDirectory() as tmp:
++            db_path = Path(tmp) / "catalog.sqlite3"
++            with sqlite3.connect(db_path) as db:
++                db.execute("CREATE TABLE evidence(id INTEGER PRIMARY KEY,source_id TEXT,sha256 TEXT,size INTEGER,status TEXT,relpath TEXT)")
++                db.execute("CREATE TABLE inventory_runs(id INTEGER PRIMARY KEY,source_id TEXT,status TEXT)")
++                db.execute("CREATE TABLE sources(id TEXT PRIMARY KEY,root TEXT NOT NULL)")
++                db.execute("INSERT INTO sources VALUES ('synthetic','/synthetic/source')")
++                db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?)", tuple(self.record[k] for k in ("id", "source_id", "sha256", "size", "status", "relpath")))
++                db.execute("INSERT INTO inventory_runs VALUES (1,'synthetic','complete')")
++
++            class SyntheticCase:
++                def connect(self):
++                    db = sqlite3.connect(db_path)
++                    db.row_factory = sqlite3.Row
++                    return db
++
++            self.assertTrue(inspect_catalog_byte_range(SyntheticCase(), self.anchor)["ok"])
++            with sqlite3.connect(db_path) as db:
++                db.execute("DELETE FROM sources WHERE id='synthetic'")
++            self.assertEqual(inspect_catalog_byte_range(SyntheticCase(), self.anchor),
++                             {"ok": False, "reason": "unknown_source"})
++
++    def test_catalog_resolution_rejects_ambiguous_or_invalid_references(self):
++        with tempfile.TemporaryDirectory() as tmp:
++            db_path = Path(tmp) / "catalog.sqlite3"
++            with sqlite3.connect(db_path) as db:
++                db.execute("CREATE TABLE evidence(id INTEGER PRIMARY KEY,source_id TEXT,sha256 TEXT,size INTEGER,status TEXT,relpath TEXT)")
++                db.execute("CREATE TABLE inventory_runs(id INTEGER PRIMARY KEY,source_id TEXT,status TEXT)")
++                db.execute("CREATE TABLE sources(id TEXT PRIMARY KEY,root TEXT NOT NULL)")
++                db.execute("INSERT INTO sources VALUES ('synthetic','/synthetic/source')")
++                db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?)", tuple(self.record[k] for k in ("id", "source_id", "sha256", "size", "status", "relpath")))
++                db.execute("INSERT INTO inventory_runs VALUES (1,'synthetic','complete')")
++
++            class SyntheticCase:
++                def connect(self):
++                    connection = sqlite3.connect(db_path)
++                    connection.row_factory = sqlite3.Row
++                    return connection
++
++            case = SyntheticCase()
++            for change, reason in (({"evidence_id": 8}, "unknown_evidence"),
++                                   ({"source_id": "other"}, "unknown_evidence"),
++                                   ({"sha256": "0" * 64}, "anchor_catalog_mismatch"),
++                                   ({"start": 99}, "anchor_catalog_mismatch"),
++                                   ({"evidence_id": True}, "invalid_anchor"),
++                                   ({"evidence_id": -1}, "invalid_anchor"),
++                                   ({"evidence_id": 1 << 100}, "invalid_anchor")):
++                with self.subTest(change=change):
++                    self.assertEqual(inspect_catalog_byte_range(case, dict(self.anchor, **change)),
++                                     {"ok": False, "reason": reason})
++
++    def test_original_byte_span_verified_against_full_digest(self):
++        from dfa.anchors import read_verified_byte_range
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / "source"
++            source.mkdir()
++            content = b"synthetic-original-byte-anchor-0123456789"
++            (source / "original.bin").write_bytes(content)
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", source)
++            self.assertEqual(case.ingest("sample")["scan_status"], "complete")
++            with case.connect() as db:
++                row = db.execute("SELECT id,source_id,sha256,size,status FROM evidence WHERE relpath='original.bin'").fetchone()
++                anchor = make_byte_range_anchor(row, 10, 18)
++            reopened = Case(case.root)
++            self.assertEqual(reopened.index_rebuild()["rebuilt"], 1)
++            result = read_verified_byte_range(reopened, anchor)
++            self.assertTrue(result["ok"], result)
++            self.assertEqual(result["data"], content[10:18])
++            self.assertEqual(result["status"], "bytes_verified_against_catalog_digest")
++            self.assertEqual(read_verified_byte_range(reopened, anchor, max_bytes=3),
++                             {"ok": False, "reason": "range_too_large"})
++
++    def test_byte_reader_detects_unrecorded_same_length_drift(self):
++        from dfa.anchors import read_verified_byte_range
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / "source"
++            source.mkdir()
++            target = source / "note.txt"
++            target.write_bytes(b"synthetic-AAA")
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", source)
++            case.ingest("sample")
++            with case.connect() as db:
++                row = db.execute("SELECT id,source_id,sha256,size,status FROM evidence WHERE relpath='note.txt'").fetchone()
++                anchor = make_byte_range_anchor(row, 0, 9)
++            self.assertEqual(read_verified_byte_range(case, anchor)["data"], b"syntheti")
++            target.write_bytes(b"synthetic-BBB")
++            self.assertEqual(read_verified_byte_range(case, anchor),
++                             {"ok": False, "reason": "source_changed"})
++
++    def test_byte_reader_refuses_replaced_symlink_and_partial_scan(self):
++        from dfa.anchors import read_verified_byte_range
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            source = root / "source"
++            source.mkdir()
++            target = source / "note.txt"
++            target.write_bytes(b"synthetic known bytes")
++            outside = root / "outside.txt"
++            outside.write_bytes(b"synthetic known bytes")
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", source)
++            case.ingest("sample")
++            with case.connect() as db:
++                row = db.execute("SELECT id,source_id,sha256,size,status FROM evidence WHERE relpath='note.txt'").fetchone()
++                anchor = make_byte_range_anchor(row, 0, 9)
++            target.unlink()
++            try:
++                target.symlink_to(outside)
++            except (OSError, NotImplementedError):
++                self.skipTest("symlinks unavailable")
++            self.assertEqual(read_verified_byte_range(case, anchor),
++                             {"ok": False, "reason": "source_unavailable"})
++            target.unlink()
++            target.write_bytes(b"synthetic known bytes")
++            with case.connect() as db:
++                db.execute("INSERT INTO inventory_runs(source_id,started,finished,status) "
++                           "VALUES('sample',1,2,'partial')")
++            self.assertEqual(read_verified_byte_range(case, anchor),
++                             {"ok": False, "reason": "inventory_incomplete"})
++
++
++    def test_byte_reader_detects_source_root_remap_during_read(self):
++        """A changed source mapping must not masquerade as verified current bytes."""
++        from unittest.mock import patch
++        from dfa.anchors import read_verified_byte_range
++        from dfa import store
++
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            original = root / "original-source"
++            replacement = root / "replacement-source"
++            original.mkdir()
++            replacement.mkdir()
++            content = b"synthetic source root mapping"
++            (original / "note.txt").write_bytes(content)
++            (replacement / "note.txt").write_bytes(content)
++            case = Case(root / "case")
++            case.init()
++            case.source_add("sample", original)
++            self.assertEqual(case.ingest("sample")["scan_status"], "complete")
++            with case.connect() as db:
++                row = db.execute(
++                    "SELECT id,source_id,sha256,size,status FROM evidence "
++                    "WHERE source_id='sample' AND relpath='note.txt'"
++                ).fetchone()
++                anchor = make_byte_range_anchor(row, 0, 9)
++
++            original_open = store._open_confined_file
++            swapped = False
++
++            def remap_after_open(*args, **kwargs):
++                nonlocal swapped
++                fd = original_open(*args, **kwargs)
++                if not swapped:
++                    swapped = True
++                    with case.connect() as db:
++                        db.execute("UPDATE sources SET root=? WHERE id='sample'",
++                                   (str(replacement),))
++                return fd
++
++            with patch.object(store, "_open_confined_file", side_effect=remap_after_open):
++                result = read_verified_byte_range(case, anchor)
++            self.assertTrue(swapped)
++            self.assertEqual(result, {"ok": False, "reason": "catalog_changed"})
++
++
++if __name__ == "__main__":
++    unittest.main()

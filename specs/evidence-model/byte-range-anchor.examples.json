@@ -1,0 +1,50 @@
+{
+  "description": "Synthetic normative anchor shape; the digest identifies the synthetic payload below, and the ID is local to its case.",
+  "payload_utf8": "synthetic anchor bytes",
+  "catalog_record": {
+    "id": 7,
+    "source_id": "synthetic",
+    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+    "size": 22,
+    "status": "indexed"
+  },
+  "valid_anchor": {
+    "version": 1,
+    "type": "byte_range",
+    "source_id": "synthetic",
+    "evidence_id": 7,
+    "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+    "start": 0,
+    "end": 9
+  },
+  "invalid_anchors": [
+    {
+      "version": 1,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 9,
+      "end": 9
+    },
+    {
+      "version": 1,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 23
+    },
+    {
+      "version": 1,
+      "type": "byte_range",
+      "source_id": "synthetic",
+      "evidence_id": 7,
+      "sha256": "f58c6ca81ed341db063e58d397940f9989a9a5f7511ef55890788e8b851b0b76",
+      "start": 0,
+      "end": 9,
+      "relpath": "untrusted.txt"
+    }
+  ]
+}
