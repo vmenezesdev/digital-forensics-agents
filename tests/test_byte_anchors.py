@@ -268,7 +268,7 @@ class ByteRangeAnchorTests(unittest.TestCase):
             with case.connect() as db:
                 row = db.execute("SELECT id,source_id,sha256,size,status FROM evidence WHERE relpath='note.txt'").fetchone()
                 anchor = make_byte_range_anchor(row, 0, 9)
-            self.assertEqual(read_verified_byte_range(case, anchor)["data"], b"syntheti")
+            self.assertEqual(read_verified_byte_range(case, anchor)["data"], b"synthetic")
             target.write_bytes(b"synthetic-BBB")
             self.assertEqual(read_verified_byte_range(case, anchor),
                              {"ok": False, "reason": "source_changed"})
