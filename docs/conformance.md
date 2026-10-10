@@ -22,7 +22,7 @@ GitHub Actions runs the same suite after every push to `trunk`; some tests also 
 | Disappearing files, unreadable files and in-flight changes cannot look complete | `test_disappearing_file_before_inspection_causes_partial_not_excluded`, `test_file_read_failure_creates_partial_inventory`, `test_changed_while_reading_does_not_reset_first_digest` |
 | Final and intermediate symlinks cannot silently escape a registered source | `test_file_symlink_not_followed_during_ingest`, `test_swapped_final_symlink_at_open_is_not_read`, `test_intermediate_directory_swap_cannot_escape_source_root` |
 | A nested directory replaced by a symlink makes the scan partial, preserving unknown missing-path counts | `test_nested_directory_replacement_is_partial_not_missing` |
-| Nested real-directory swaps during traversal cause partial scans | `test_directory_replaced_after_discovery_is_partial` |
+| Nested directory swaps after discovery cause partial scans, including skipped descent | `test_directory_replaced_after_discovery_is_partial` |
 | Real-directory source root swaps are rejected during inventory, verification and index rebuild | `test_real_directory_source_root_swap_rolls_back_instead_of_indexing_replacement`, `test_verification_detects_real_source_root_swap_during_hash`, `test_source_root_replacement_during_rebuild_aborts_atomically` |
 | Latest partial/failed source does not serve cached hits as current; other sources continue | `test_failed_latest_inventory_suppresses_prior_search_hits`, `test_partial_source_does_not_hide_other_complete_sources` |
 | No-match is never exhaustive absence; limits and coverage are disclosed | `test_receipts_and_incomplete_coverage`, `test_search_limit_exposes_truncation`, `test_cli_reports_counts_and_non_acquisition_limitations` |
@@ -50,7 +50,7 @@ The suites `test_integrity_cli.py`, `test_audit_checkpoint.py`, `test_index_rebu
 ## What is **not** proved
 
 - No attestation of the filesystem, registered-root ancestors, external source copies, permissions, disk firmware, time or operator identity.
-- Race-free enumeration of arbitrary live source trees is not guaranteed; a directory swapped after discovery may still evade the partial-scan signal. `os.walk` discovers names separately from secured file reads; changes between syscalls and in-place writes can still escape metadata detection in some conditions.
+- Race-free enumeration of arbitrary live source trees is not guaranteed; some races may still evade the partial-scan signal despite checks for discovered but unvisited directories. `os.walk` discovers names separately from secured file reads; changes between syscalls and in-place writes can still escape metadata detection in some conditions.
 - No known-complete universe of every document/page/audio segment, no OCR/STT pipeline, and no proof that an empty search result means absent evidence.
 - SQLite is a private single-machine prototype, not a multi-user transaction server or immutable evidence repository.
 - Local audit digests can be recomputed by privileged attackers. Exported checkpoints help **only if stored and authenticated outside the attacked database**; no WORM or external timestamp is provided.
