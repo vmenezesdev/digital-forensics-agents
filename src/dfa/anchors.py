@@ -112,6 +112,7 @@ def read_verified_byte_range(case, anchor, *, max_bytes=1048576):
     import stat
     from pathlib import Path
     from .store import _open_confined_file
+    from .source_registration import inspect_source_registration
 
     if type(max_bytes) is not int or not 1 <= max_bytes <= 1048576:
         raise ValueError("max_bytes must be between 1 and 1048576")
@@ -120,6 +121,13 @@ def read_verified_byte_range(case, anchor, *, max_bytes=1048576):
         return inspected
     if anchor["end"] - anchor["start"] > max_bytes:
         return {"ok": False, "reason": "range_too_large"}
+
+    # A catalog root can be remapped to identical bytes without a new scan.
+    # Require a consistent source.add registration before reading the file.
+    with case.connect() as db:
+        registration = inspect_source_registration(db, anchor["source_id"])
+    if not registration["ok"]:
+        return {"ok": False, "reason": registration["reason"]}
 
     with case.connect() as db:
         row = db.execute(
@@ -205,6 +213,12 @@ def read_verified_byte_range(case, anchor, *, max_bytes=1048576):
         ).fetchone()
     if current_source is None or current_source["root"] != str(source_root):
         return {"ok": False, "reason": "catalog_changed"}
+    with case.connect() as db:
+        final_registration = inspect_source_registration(db, anchor["source_id"])
+    if not final_registration["ok"]:
+        return {"ok": False, "reason": final_registration["reason"]}
+    if final_registration["registration_id"] != registration["registration_id"]:
+        return {"ok": False, "reason": "registration_changed"}
     return {
         "ok": True, "status": "bytes_verified_against_catalog_digest",
         "anchor": dict(anchor), "data": bytes(selected),

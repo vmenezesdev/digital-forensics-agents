@@ -306,6 +306,38 @@ class ByteRangeAnchorTests(unittest.TestCase):
                              {"ok": False, "reason": "inventory_incomplete"})
 
 
+    def test_byte_reader_rejects_unrecorded_root_remap_with_identical_bytes(self):
+        """The same digest at a different source root is not the same registration."""
+        from dfa.anchors import read_verified_byte_range
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = root / "original-source"
+            replacement = root / "replacement-source"
+            original.mkdir()
+            replacement.mkdir()
+            payload = b"synthetic identical source bytes"
+            (original / "note.txt").write_bytes(payload)
+            (replacement / "note.txt").write_bytes(payload)
+            case = Case(root / "case")
+            case.init()
+            case.source_add("sample", original)
+            self.assertEqual(case.ingest("sample")["scan_status"], "complete")
+            with case.connect() as db:
+                record = db.execute(
+                    "SELECT id,source_id,sha256,size,status FROM evidence "
+                    "WHERE source_id='sample' AND relpath='note.txt'"
+                ).fetchone()
+                anchor = make_byte_range_anchor(record, 0, 9)
+
+            self.assertEqual(read_verified_byte_range(case, anchor)["data"], payload[:9])
+            with case.connect() as db:
+                db.execute("UPDATE sources SET root=? WHERE id='sample'",
+                           (str(replacement),))
+            self.assertEqual(read_verified_byte_range(case, anchor),
+                             {"ok": False, "reason": "registration_changed"})
+
+
     def test_byte_reader_detects_source_root_remap_during_read(self):
         """A changed source mapping must not masquerade as verified current bytes."""
         from unittest.mock import patch

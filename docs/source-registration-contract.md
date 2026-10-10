@@ -8,10 +8,13 @@ catches a catalog root reassignment **even when replacement files have identical
 bytes**. The returned `registration_id` is the original event hash and remains
 stable when later inventory, search and index events are appended.
 
-This is an independently testable preparatory primitive, **not yet wired into
-byte anchors**. The v1 byte-range candidate remains unsafe against a source
-registration replacement until the anchor carries this registration reference
-and the resolver checks it before and after original-byte reads.
+The original-byte reader now checks this local registration before and after
+reading a byte range. A catalog root remapped to a different directory with
+identical bytes is rejected as `registration_changed` even if the digest still
+matches. **The anchor itself does not yet carry the registration reference**:
+source-generation identity, same-path deletion/recreation, and migration of
+legacy catalogs remain unresolved. The catalog-only inspector is not a
+source-registration or custody verification.
 
 Fail-closed reasons: `invalid_source_id`, `unknown_source`,
 `registration_unavailable` (including pre-audit legacy sources),
@@ -33,5 +36,6 @@ O(number of audit events); performance and an externally anchored trust model
 remain separate work. No real evidence belongs in the public repository.
 
 Synthetic tests: `python -m unittest tests.test_source_registration -v`.
-They test the standalone contract, not full `Case` integration or issue #6
-acceptance. Do not close the issue on these tests alone.
+The reader integration has a synthetic `Case` regression for same-bytes root
+remapping in `tests/test_byte_anchors.py`. Neither the isolated checks nor
+reader integration alone meet the complete issue #6 acceptance criteria.
