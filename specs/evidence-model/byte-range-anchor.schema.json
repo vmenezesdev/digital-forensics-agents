@@ -11,7 +11,7 @@
     "type": {"const": "byte_range"},
     "source_id": {"type": "string", "minLength": 1},
     "evidence_id": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64},
     "start": {"type": "integer", "minimum": 0},
     "end": {"type": "integer", "minimum": 1}
   }

@@ -88,6 +88,23 @@ class RegisteredAnchorTests(unittest.TestCase):
         fixture = json.loads((spec / "byte-range-anchor-v2.examples.json").read_text())
         self.assertEqual(schema["properties"]["version"]["const"], 2)
         self.assertEqual(schema["properties"]["registration_id"]["pattern"], "^[0-9a-f]{64}$")
+        self.assertEqual(schema["properties"]["evidence_id"]["maximum"], (1 << 63) - 1)
+        for field in ("sha256", "registration_id"):
+            with self.subTest(field=field):
+                prop = schema["properties"][field]
+                self.assertEqual((prop["minLength"], prop["maxLength"]), (64, 64))
+                self.assertEqual(prop["pattern"], "^[0-9a-f]{64}$")
+                with self.assertRaises(ValueError):
+                    validate_byte_range_anchor(
+                        {**fixture["valid_anchor"], field: fixture["valid_anchor"][field] + "\n"},
+                        fixture["catalog_record"],
+                    )
+        for field in ("version", "evidence_id", "start", "end"):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_byte_range_anchor(
+                    {**fixture["valid_anchor"], field: float(fixture["valid_anchor"][field])},
+                    fixture["catalog_record"],
+                )
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(schema["required"]), set(fixture["valid_anchor"]))
         self.assertEqual(

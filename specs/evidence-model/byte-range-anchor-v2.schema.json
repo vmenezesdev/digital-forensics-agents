@@ -29,11 +29,13 @@
     "evidence_id": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 9223372036854776000
+      "maximum": 9223372036854775807
     },
     "sha256": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[0-9a-f]{64}$",
+      "minLength": 64,
+      "maxLength": 64
     },
     "start": {
       "type": "integer",
@@ -45,7 +47,9 @@
     },
     "registration_id": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
+      "pattern": "^[0-9a-f]{64}$",
+      "minLength": 64,
+      "maxLength": 64
     }
   }
 }

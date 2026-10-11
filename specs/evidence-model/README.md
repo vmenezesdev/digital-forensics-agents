@@ -105,4 +105,14 @@ event hash is a **placeholder**, not a verified source registration. JSON Schema
 alone cannot enforce `end > start`, match the catalog and live audit event,
 or authenticate source bytes. Runtime validation and source verification remain
 required. V1 remains supported; other anchor types and immutable physical-source
-generation remain outside this increment (issue #6).
+generation remain outside this increment (issue #6). Both schemas now
+limit digest/registration IDs to exactly 64 lowercase hexadecimal
+characters (the regex end anchor alone can accept a trailing newline),
+and bound evidence IDs to signed SQLite rowids (1..2^63-1). JavaScript
+`Number` cannot exactly represent all integers above 2^53-1: clients
+must preserve and validate original integer lexemes or reject unsafe
+integers before claiming conformance. Schema checks do not replace
+catalog lookup, live-byte checks, or custody assurance. JSON Schema
+also considers 7.0 mathematically integral, while the Python runtime
+requires literal integer values for version, evidence_id and offsets;
+cross-language clients must account for this stricter runtime rule.
