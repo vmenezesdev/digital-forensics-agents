@@ -196,6 +196,10 @@ class Case:
         return {"case": str(self.root), "schema_version": SCHEMA_VERSION}
 
     def source_add(self, source_id, folder):
+        # Keep the write contract aligned with inspect_source_registration:
+        # SQLite can store empty or non-text primary keys in this table.
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("Source identifier must be a non-empty string")
         p = Path(folder).expanduser().absolute()
         if p.is_symlink() or not p.is_dir():
             raise ValueError("Source must be a real directory")

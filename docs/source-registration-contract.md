@@ -62,3 +62,10 @@ same-path replacement with identical bytes, rewritten local audit history,
 and legacy source migration remain unresolved. No acquisition/custody
 attestation is made. The v2 JSON Schema and normative examples remain
 to be integrated; see issue #6. Existing v1 anchors remain supported.
+
+
+Source creation rejects empty and non-text source IDs before any SQLite or
+audit write. This matches the fail-closed identifier contract of
+`inspect_source_registration` and avoids catalog entries that cannot be
+inspected as registered. Synthetic regression:
+`python -m unittest tests.test_source_identifiers -v`.
