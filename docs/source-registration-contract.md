@@ -16,6 +16,11 @@ source-generation identity, same-path deletion/recreation, and migration of
 legacy catalogs remain unresolved. The catalog-only inspector is not a
 source-registration or custody verification.
 
+Corrupt audit storage (including a non-text event payload or missing audit
+schema) now returns `audit_log_inconsistent` rather than leaking an
+unhandled checksum/SQLite exception. This is a deterministic failure report,
+not a repair or authentication of the mutable audit log.
+
 Fail-closed reasons: `invalid_source_id`, `unknown_source`,
 `registration_unavailable` (including pre-audit legacy sources),
 `ambiguous_registration`, `malformed_registration_event`,

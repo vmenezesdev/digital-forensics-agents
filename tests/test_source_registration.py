@@ -57,6 +57,21 @@ class SourceRegistrationTests(unittest.TestCase):
             "ok": False, "reason": "audit_log_inconsistent"
         })
 
+    def test_binary_audit_payload_fails_closed_with_reason(self):
+        # A corrupt BLOB makes audit.verify's JSON checksum serializer raise.
+        self.db.execute("UPDATE audit_events SET payload=? WHERE id=1", (
+            sqlite3.Binary(b"\xff"),
+        ))
+        self.assertEqual(inspect_source_registration(self.db, "synthetic"), {
+            "ok": False, "reason": "audit_log_inconsistent"
+        })
+
+    def test_missing_audit_table_fails_closed_with_reason(self):
+        self.db.execute("DROP TABLE audit_events")
+        self.assertEqual(inspect_source_registration(self.db, "synthetic"), {
+            "ok": False, "reason": "audit_log_inconsistent"
+        })
+
     def test_malformed_registration_event_fails_closed(self):
         audit.append(self.db, "operator", "source.add", ["not", "a", "mapping"])
         self.assertEqual(inspect_source_registration(self.db, "synthetic"), {

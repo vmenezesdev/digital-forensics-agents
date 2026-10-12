@@ -4,6 +4,7 @@ This is an interim identity binding for issue #6, not an authenticated custody r
 The audit log is mutable by a local database administrator.
 """
 import json
+import sqlite3
 from . import audit
 
 
@@ -24,7 +25,12 @@ def inspect_source_registration(db, source_id):
 
 
 def _inspect_snapshot(db, source_id):
-    integrity = audit.verify(db)
+    # Corrupt SQLite cells can make the checksum serializer raise instead of
+    # returning a structured failure. Never treat such an audit as registered.
+    try:
+        integrity = audit.verify(db)
+    except (sqlite3.DatabaseError, TypeError, ValueError, UnicodeError):
+        return {"ok": False, "reason": "audit_log_inconsistent"}
     if not integrity["ok"]:
         return {"ok": False, "reason": "audit_log_inconsistent"}
     source = db.execute("SELECT root FROM sources WHERE id=?", (source_id,)).fetchone()
@@ -36,7 +42,7 @@ def _inspect_snapshot(db, source_id):
     ):
         try:
             payload = json.loads(event["payload"])
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, UnicodeError):
             return {"ok": False, "reason": "malformed_registration_event"}
         if not isinstance(payload, dict):
             return {"ok": False, "reason": "malformed_registration_event"}
