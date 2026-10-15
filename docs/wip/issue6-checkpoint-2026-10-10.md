@@ -79,3 +79,30 @@ configured Codex Cloud environment.
 Next action: continue using SHA-specific push CI for published increments;
 run local tests when an authorized checkout becomes available. Do not require
 the user's personal machine as an automatic fallback.
+
+## 2026-10-15 update — schema NUL conformance increment and remaining blockers
+
+- **Published:** `12b31737b8dfeeae33c2c42798d92cf1ff5f2d1d` (refs #6), an atomic
+  v1/v2 JSON Schema source-ID constraint and synthetic regression test. The
+  original schema blob hashes were pinned; isolated RED validation reproduced
+  two failures and GREEN passed both subtests. Independent JSON Schema Draft
+  2020-12 validation accepted valid Unicode and rejected embedded NUL.
+- **CI:** push run [38773562270](https://github.com/vmenezesdev/digital-forensics-agents/actions/runs/38773562270),
+  job `116555317852`, completed/success for that exact commit: **94 tests**.
+  Node.js 20 / `punycode` deprecation notices are nonblocking warnings.
+- **2026-10-15, issue #6 comment blocker:** after the above publication, a
+  consolidated issue-comment attempt returned
+  `This tool call was blocked by OpenAI's safety checks. Please double check what you are sending.`
+  Impact: cannot persist the issue update as a comment; this document records
+  the evidence instead. Unblock: issue-comment operation becomes authorized.
+  Next action: link the relevant commit and CI from #6 when allowed, without
+  retrying an unchanged denied action.
+- **2026-10-15, #6 local full-checkout blocker:** direct local network attempts
+  through 12:52 failed with `Temporary failure in name resolution` /
+  `Could not resolve host: github.com` (baseline `8b2d38a`, CI
+  `38267076875`). Impact: four pending product patches remain validated only
+  in reduced fixtures, not the full product suite. Unblock: complete verified
+  checkout or restored authorized network. Next: run the pinned four-patch
+  preflight on a full checkout and integrate separate atomic increments.
+- **#9 dependency:** query-receipt work remains blocked on stable #6 identity.
+  Neither #6 nor #9 is complete; no custody or acquisition claims are made.
