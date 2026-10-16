@@ -15,7 +15,11 @@ def inspect_source_registration(db, source_id):
     hash is a case-local reference, not custody proof. A legacy source without
     a matching event cannot be asserted as registered.
     """
-    if not isinstance(source_id, str) or not source_id:
+    if not isinstance(source_id, str) or not source_id or "\x00" in source_id:
+        return {"ok": False, "reason": "invalid_source_id"}
+    try:
+        source_id.encode("utf-8")
+    except UnicodeEncodeError:
         return {"ok": False, "reason": "invalid_source_id"}
     db.execute("SAVEPOINT dfa_source_registration_snapshot")
     try:

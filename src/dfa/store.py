@@ -200,6 +200,13 @@ class Case:
         # SQLite can store empty or non-text primary keys in this table.
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("Source identifier must be a non-empty string")
+        # Reject ambiguous SQLite TEXT and unencodable identifiers before writes.
+        if "\x00" in source_id:
+            raise ValueError("Source identifier must not contain NUL")
+        try:
+            source_id.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError("Source identifier must be valid UTF-8") from error
         p = Path(folder).expanduser().absolute()
         if p.is_symlink() or not p.is_dir():
             raise ValueError("Source must be a real directory")

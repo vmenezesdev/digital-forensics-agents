@@ -79,7 +79,7 @@ class SourceRegistrationTests(unittest.TestCase):
         })
 
     def test_invalid_identifier_rejected(self):
-        for value in (None, "", False, 42):
+        for value in (None, "", False, 42, "bad\x00id", "bad\ud800id", "bad\udfffid"):
             with self.subTest(value=value):
                 self.assertEqual(inspect_source_registration(self.db, value), {
                     "ok": False, "reason": "invalid_source_id"

@@ -69,3 +69,13 @@ audit write. This matches the fail-closed identifier contract of
 `inspect_source_registration` and avoids catalog entries that cannot be
 inspected as registered. Synthetic regression:
 `python -m unittest tests.test_source_identifiers -v`.
+
+## Source-ID input validity (issue #6)
+
+Registration and inspection reject empty/non-text identifiers, embedded NUL
+characters, and unpaired Unicode surrogates. Registration rejects them before
+any SQLite or audit write; inspection returns `invalid_source_id` without
+binding malformed text into SQLite. Valid supplementary Unicode remains
+supported. This is input validation, **not** source authentication or custody
+proof. Synthetic regressions: `tests/test_source_identifiers.py` and
+`tests/test_source_registration.py`.
