@@ -4,6 +4,7 @@ This is an interim identity binding for issue #6, not an authenticated custody r
 The audit log is mutable by a local database administrator.
 """
 import json
+import math
 import sqlite3
 from . import audit
 
@@ -28,6 +29,27 @@ def inspect_source_registration(db, source_id):
         db.execute("RELEASE SAVEPOINT dfa_source_registration_snapshot")
 
 
+def _reject_duplicate_keys(pairs):
+    """Ambiguous JSON objects cannot identify an audited source."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite_constant(value):
+    raise ValueError("Non-finite JSON constant: " + value)
+
+
+def _parse_finite_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("Non-finite JSON float")
+    return number
+
+
 def _inspect_snapshot(db, source_id):
     # Corrupt SQLite cells can make the checksum serializer raise instead of
     # returning a structured failure. Never treat such an audit as registered.
@@ -45,8 +67,12 @@ def _inspect_snapshot(db, source_id):
         "SELECT event_hash,payload FROM audit_events WHERE action COLLATE BINARY='source.add' ORDER BY id"
     ):
         try:
-            payload = json.loads(event["payload"])
-        except (ValueError, TypeError, UnicodeError):
+            payload = json.loads(
+                event["payload"], object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_nonfinite_constant,
+                parse_float=_parse_finite_float,
+            )
+        except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
             return {"ok": False, "reason": "malformed_registration_event"}
         if not isinstance(payload, dict):
             return {"ok": False, "reason": "malformed_registration_event"}
