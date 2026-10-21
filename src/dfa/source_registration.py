@@ -42,7 +42,7 @@ def _inspect_snapshot(db, source_id):
         return {"ok": False, "reason": "unknown_source"}
     registrations = []
     for event in db.execute(
-        "SELECT event_hash,payload FROM audit_events WHERE action='source.add' ORDER BY id"
+        "SELECT event_hash,payload FROM audit_events WHERE action COLLATE BINARY='source.add' ORDER BY id"
     ):
         try:
             payload = json.loads(event["payload"])
